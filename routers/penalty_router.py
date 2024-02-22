@@ -1,20 +1,9 @@
-<<<<<<< HEAD
-from fastapi import APIRouter, HTTPException, Depends
-from datetime import date, timedelta
-=======
 from fastapi import APIRouter, Depends, HTTPException, UploadFile, File, Form, Header
 from datetime import date, datetime, timedelta
->>>>>>> c3c48f9 (Loan Applications update)
 from sqlalchemy.orm import Session
 from sqlalchemy import and_
 from db.db_connection import get_db 
 from models.penalty_models import PenaltyCreate, CurrentPenalty, PenaltyRequest
-<<<<<<< HEAD
-from db.all_db import PenaltyInDB
-
-router = APIRouter()
-
-=======
 from db.all_db import PenaltyInDB, LogsInDb
 import os
 import jwt
@@ -42,15 +31,11 @@ def decode_jwt(token):
         raise HTTPException(status_code=401, detail=str(e))
 
 
->>>>>>> c3c48f9 (Loan Applications update)
 def last_day_of_month(any_day: date) -> date:
     next_month = any_day.replace(day=28) + timedelta(days=4)
     return (next_month - timedelta(days=next_month.day))
 
 @router.post("/create_penalty/", response_model=CurrentPenalty)
-<<<<<<< HEAD
-async def create_penalty(penalty: PenaltyCreate, db: Session = Depends(get_db)):
-=======
 async def create_penalty(
     penalty: PenaltyCreate, 
     db: Session = Depends(get_db),
@@ -68,7 +53,6 @@ async def create_penalty(
     if user_role != 'admin':
         raise HTTPException(status_code=403, detail="Access denied")
 
->>>>>>> c3c48f9 (Loan Applications update)
     start_date = penalty.month.replace(day=1)
     end_date = last_day_of_month(start_date)
 
@@ -91,9 +75,6 @@ async def create_penalty(
     db.add(db_penalty)
     db.commit()
     db.refresh(db_penalty)
-<<<<<<< HEAD
-    
-=======
 
     log_entry = LogsInDb(
         action      = "Created Penalty Rate",
@@ -104,16 +85,12 @@ async def create_penalty(
     db.add(log_entry)
     db.commit()
 
->>>>>>> c3c48f9 (Loan Applications update)
     return CurrentPenalty(
         start_date=db_penalty.start_date,
         end_date=db_penalty.end_date,
         penalty_rate=db_penalty.penalty_rate
     )
 
-<<<<<<< HEAD
-@router.get("/get_current_penalty/{month}/{year}", response_model=CurrentPenalty)
-=======
 @router.get("/get_penalty_rates/")
 async def get_penalty_rates(db: Session = Depends(get_db), token: str = Header(None)):
     # Token and role verification
@@ -162,7 +139,6 @@ async def get_penalty_rates(db: Session = Depends(get_db), token: str = Header(N
 
 
 @router.get("/get_current_penalty/{month}/{year}")
->>>>>>> c3c48f9 (Loan Applications update)
 async def get_current_penalty(month: int, year: int, db: Session = Depends(get_db)):
     month_start = date(year, month, 1)
     month_end = last_day_of_month(month_start)
@@ -172,17 +148,7 @@ async def get_current_penalty(month: int, year: int, db: Session = Depends(get_d
     ).first()
 
     if not penalty:
-<<<<<<< HEAD
-        raise HTTPException(status_code=404, detail="Penalty for this month not found")
-
-    return CurrentPenalty(
-        start_date  = penalty.start_date,
-        end_date    = penalty.end_date,
-        penalty_rate= penalty.penalty_rate
-    )
-=======
         return { "message": "No hay intereses de mora para este mes"}
 
     return penalty 
 
->>>>>>> c3c48f9 (Loan Applications update)

@@ -1,20 +1,14 @@
 from fastapi import Depends, FastAPI
-<<<<<<< HEAD
-=======
 from fastapi.staticfiles import StaticFiles
->>>>>>> c3c48f9 (Loan Applications update)
 from fastapi.middleware.cors import CORSMiddleware
 from routers.users_router import router as router_users
 from routers.property_router import router as router_properties
 from routers.mortgage_router import router as router_mortgages  
 from routers.reg_router import router as router_registers
 from routers.penalty_router import router as router_penalties
-<<<<<<< HEAD
-=======
 from routers.logs_router import router as router_logs
 from routers.loan_router import router as loan_router
 from routers.upload_router import router as router_upload
->>>>>>> c3c48f9 (Loan Applications update)
 from starlette.middleware.trustedhost import TrustedHostMiddleware
 
 actyval = FastAPI()
@@ -34,19 +28,12 @@ actyval.add_middleware(
     allow_credentials=True, 
     allow_methods=["*"], 
     allow_headers=["*"],
-<<<<<<< HEAD
-)
-=======
 ) 
->>>>>>> c3c48f9 (Loan Applications update)
 
 actyval.include_router(router_users)
 actyval.include_router(router_properties)
 actyval.include_router(router_mortgages)
 actyval.include_router(router_registers)
-<<<<<<< HEAD
-actyval.include_router(router_penalties)
-=======
 actyval.include_router(router_penalties)
 actyval.include_router(router_logs)
 actyval.include_router(loan_router)
@@ -55,4 +42,3 @@ actyval.include_router(router_upload)
 
 # Mount the '/admin/uploads' path to serve static files from the './uploads/' directory
 actyval.mount("/admin/uploads", StaticFiles(directory="./uploads"), name="uploads")
->>>>>>> c3c48f9 (Loan Applications update)

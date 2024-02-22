@@ -2,11 +2,7 @@ from fastapi import Depends, APIRouter, HTTPException, Header
 from sqlalchemy.orm import Session 
 from db.db_connection import get_db
 from db.all_db import UserInDB, MortgageInDB, LogsInDb, RegsInDb, PropInDB, PenaltyInDB
-<<<<<<< HEAD
-from models.user_models import UserIn, UserAuth, UserInfoAsk 
-=======
 from models.user_models import UserIn, UserAuth, UserInfoAsk, UserInfoUpdate
->>>>>>> c3c48f9 (Loan Applications update)
 from passlib.context import CryptContext
 from jose import jwt
 from datetime import datetime, timedelta
@@ -175,28 +171,6 @@ async def get_mi_perfil(user_info_ask: str, db: Session = Depends(get_db)):
     db.commit()
 
     user_info_dict = {
-<<<<<<< HEAD
-        "role"              : user_info.role,
-        "username"          : user_info.username,
-        "email"             : user_info.email,       
-        "phone"             : user_info.phone, 
-        "legal_address"     : user_info.legal_address,
-        "user_city"         : user_info.user_city,
-        "user_department"   : user_info.user_department,
-        "id_number"         : user_info.id_number,
-        "tax_id"            : user_info.tax_id,
-        "score"             : user_info.score,
-        "user_status"       : user_info.user_status,
-        "bank_account"      : user_info.bank_account,
-        "account_number"    : user_info.account_number,
-        "bank_name"         : user_info.bank_name,
-        "agent"             : user_info.agent,
-        "added_by"          : user_info.added_by
-    }
-
-    return user_info_dict
-
-=======
         "username"        : user_info.username,
         "email"           : user_info.email,       
         "phone"           : user_info.phone, 
@@ -214,7 +188,6 @@ async def get_mi_perfil(user_info_ask: str, db: Session = Depends(get_db)):
     return user_info_dict
 
 
->>>>>>> c3c48f9 (Loan Applications update)
 @router.post("/user/info/")  #LOGS #TOKEN
 async def get_user_info(user_info_ask: UserInfoAsk, db: Session = Depends(get_db), 
     token: str = Header(None)):
@@ -366,16 +339,9 @@ def admin_summary(db: Session = Depends(get_db), token: str = Header(None)):
         db.add(log_entry)
         db.commit()
         raise HTTPException(status_code=403, detail="Insufficient privileges")
-<<<<<<< HEAD
-
-    # Get total count of mortgages, registers, and users
-    total_mortgages = db.query(func.count(MortgageInDB.id)).scalar()
-    total_registers = db.query(func.count(RegsInDb.id)).filter(RegsInDb.amount > 0).scalar()
-=======
  
     # Get total count of mortgages, registers, and users
     total_mortgages = db.query(func.count(MortgageInDB.id)).scalar()
->>>>>>> c3c48f9 (Loan Applications update)
     total_users = db.query(func.count(UserInDB.id)).scalar()
 
     # Get total amounts for mortgages and registers
@@ -389,12 +355,7 @@ def admin_summary(db: Session = Depends(get_db), token: str = Header(None)):
 
     # Get the number of mortgages with specific statuses
     debt_pending_mortgages = db.query(func.count(MortgageInDB.id)).filter(MortgageInDB.mortgage_status == "debt_pending").scalar()
-<<<<<<< HEAD
-    lawyer_mortgages = db.query(func.count(MortgageInDB.id)).filter(MortgageInDB.mortgage_status == "lawyer").scalar()
-
-=======
     
->>>>>>> c3c48f9 (Loan Applications update)
     # Get the number of users with specific roles
     admin_users = db.query(func.count(UserInDB.id)).filter(UserInDB.role == "admin").scalar()
     debtor_users = db.query(func.count(UserInDB.id)).filter(UserInDB.role == "debtor").scalar()
@@ -422,11 +383,7 @@ def admin_summary(db: Session = Depends(get_db), token: str = Header(None)):
         penalty_status = "vencido"
 
     # Get the number of properties with specific statuses
-<<<<<<< HEAD
-    received_props = db.query(func.count(PropInDB.id)).filter(PropInDB.prop_status == "received").scalar()
-=======
     received_props = db.query(func.count(PropInDB.id)).filter(PropInDB.comments != "approved" or "rejected").scalar()
->>>>>>> c3c48f9 (Loan Applications update)
     selected_props = db.query(func.count(PropInDB.id)).filter(PropInDB.prop_status == "selected").scalar()
     
 
@@ -506,9 +463,6 @@ def get_all_registers(db: Session = Depends(get_db), token: str = Header(None)):
 
     return all_registers
 
-<<<<<<< HEAD
-    
-=======
 @router.put("/update_user_info/{id_number}")
 async def update_user_info(
     id_number: str,
@@ -550,4 +504,3 @@ async def update_user_info(
     db.commit()
 
     return {"message": "Información de usuario actualizada correctamente"}
->>>>>>> c3c48f9 (Loan Applications update)

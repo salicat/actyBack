@@ -7,11 +7,7 @@ from models.mortgage_models import MortgageCreate
 from datetime import timedelta, date, datetime
 import jwt
 
-<<<<<<< HEAD
-utc_now = datetime.utcnow()
-=======
 utc_now = datetime.utcnow() 
->>>>>>> c3c48f9 (Loan Applications update)
 utc_offset = timedelta(hours=-5)
 local_now = utc_now + utc_offset
 local_timestamp_str = local_now.strftime('%Y-%m-%d %H:%M:%S.%f')
@@ -34,13 +30,9 @@ def decode_jwt(token):
 
 
 @router.post("/mortgages/create/") #LOGS #TOKEN-ROLE
-<<<<<<< HEAD
-def create_mortgage(mortgage_data: MortgageCreate, db: Session = Depends(get_db), token: str = Header(None)):
-=======
 def create_mortgage(mortgage_data   : MortgageCreate, 
                     db              : Session = Depends(get_db), 
                     token           : str = Header(None)):
->>>>>>> c3c48f9 (Loan Applications update)
     if not token:
         # Log unauthorized access attempt
         log_entry = LogsInDb(
@@ -70,21 +62,12 @@ def create_mortgage(mortgage_data   : MortgageCreate,
 
         raise HTTPException(status_code=403, detail="Token is missing or invalid")
 
-<<<<<<< HEAD
-    if role_from_token != "admin":
-        # Log unauthorized access attempt
-=======
     if role_from_token != "admin": # Log unauthorized access attempt
->>>>>>> c3c48f9 (Loan Applications update)
         log_entry = LogsInDb(
             action      = "User Alert",
             timestamp   = local_timestamp_str,
             message     = "Unauthorized attempt to create mortgage (Insufficient permissions)",
-<<<<<<< HEAD
-            user_id     = None  # You can leave user_id as None for unauthorized access
-=======
             user_id     = None  
->>>>>>> c3c48f9 (Loan Applications update)
         )
         db.add(log_entry)
         db.commit()
@@ -94,12 +77,7 @@ def create_mortgage(mortgage_data   : MortgageCreate,
     lender = db.query(UserInDB).filter(UserInDB.id_number == mortgage_data.lender_id).first()
     debtor = db.query(UserInDB).filter(UserInDB.id_number == mortgage_data.debtor_id).first()
 
-<<<<<<< HEAD
-    if not lender or not debtor:
-        # Log invalid lender or debtor access attempt
-=======
     if not lender or not debtor: # Log invalid lender or debtor access attempt
->>>>>>> c3c48f9 (Loan Applications update)
         log_entry = LogsInDb(
             action      = "User Alert",
             timestamp   = local_timestamp_str,
@@ -113,12 +91,7 @@ def create_mortgage(mortgage_data   : MortgageCreate,
 
     debtor_properties = db.query(PropInDB).filter(PropInDB.owner_id == debtor.id_number).all()
 
-<<<<<<< HEAD
-    if not debtor_properties:
-        # Log user with no registered properties access attempt
-=======
     if not debtor_properties: # Log user with no registered properties access attempt
->>>>>>> c3c48f9 (Loan Applications update)
         log_entry = LogsInDb(
             action      = "User Alert",
             timestamp   = local_timestamp_str,
@@ -145,11 +118,7 @@ def create_mortgage(mortgage_data   : MortgageCreate,
 
         raise HTTPException(status_code=400, detail="El prospecto deudor no es propietario del inmueble en referencia")
 
-<<<<<<< HEAD
-    if property.prop_status != "available":
-=======
     if property.prop_status != "process":
->>>>>>> c3c48f9 (Loan Applications update)
         # Log unauthorized access attempt to create mortgage with an unavailable property
         log_entry = LogsInDb(
             action      = "User Alert",
@@ -160,14 +129,10 @@ def create_mortgage(mortgage_data   : MortgageCreate,
         db.add(log_entry)
         db.commit()
 
-<<<<<<< HEAD
-        raise HTTPException(status_code=400, detail="Inmueble no disponible para hipoteca")
-=======
         raise HTTPException(
             status_code = 400, 
             detail      = "Inmueble no disponible para hipoteca"
         )
->>>>>>> c3c48f9 (Loan Applications update)
 
     new_mortgage = MortgageInDB(
         lender_id       = mortgage_data.lender_id,

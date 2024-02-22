@@ -29,11 +29,9 @@ class UserInDB(Base):
     agent_mortgages     = relationship("MortgageInDB", foreign_keys="[MortgageInDB.agent_id]", back_populates="agent") # New line
     logs                = relationship("LogsInDb", back_populates="user")
     added_by_user       = relationship("UserInDB", foreign_keys=[added_by])
-<<<<<<< HEAD
-=======
+    
     affiliate_activities = relationship("AffiliateActivity", foreign_keys="[AffiliateActivity.affiliate_id]")
     referred_by_affiliate = relationship("AffiliateActivity", foreign_keys="[AffiliateActivity.referred_user_id]")
->>>>>>> c3c48f9 (Loan Applications update)
 
 class AffiliatesInDb(Base):
     __tablename__ = "affiliates"
@@ -64,11 +62,7 @@ class RegsInDb(Base):
     debtor      = relationship("UserInDB", foreign_keys=[debtor_id])
 
 class PropInDB(Base):
-<<<<<<< HEAD
-    __tablename__ = "properties"
-=======
     __tablename__ = "properties" 
->>>>>>> c3c48f9 (Loan Applications update)
     id              = Column(Integer, primary_key=True, autoincrement=True)
     owner_id        = Column(String, ForeignKey("users.id_number"), nullable=False)
     matricula_id    = Column(String, unique=True) #this will need a pdf file
@@ -83,20 +77,12 @@ class PropInDB(Base):
     loan_solicited  = Column(Integer)
     rate_proposed   = Column(Float)
     evaluation      = Column(String)
-<<<<<<< HEAD
-    prop_status     = Column(String) # "available" is the only one that allows to create a mortgage
-                                    # status= "available, "
-    comments        = Column(String)
-
-    owner = relationship("UserInDB", back_populates="owned_properties", foreign_keys=[owner_id])
-=======
     prop_status     = Column(String)    # "received", "available", "selected", "process", "loaned"
                                         # "available" is the only one that allows to create a mortgage
     comments        = Column(String)    # "study", "approved"
 
     owner           = relationship("UserInDB", back_populates="owned_properties", foreign_keys=[owner_id])
     loan_progress   = relationship("LoanProgress", back_populates="property")
->>>>>>> c3c48f9 (Loan Applications update)
 
 
 class MortgageInDB(Base): 
@@ -120,8 +106,6 @@ class MortgageInDB(Base):
     agent       = relationship("UserInDB", foreign_keys=[agent_id], back_populates="agent_mortgages") 
     registers   = relationship("RegsInDb", back_populates="mortgage")
 
-<<<<<<< HEAD
-=======
 class LoanProgress(Base):
     __tablename__ = 'loan_progress'
     id          = Column(Integer, primary_key=True, autoincrement=True)
@@ -150,7 +134,6 @@ class AffiliateActivity(Base):
     referred_user   = relationship("UserInDB", foreign_keys=[referred_user_id])
 
 
->>>>>>> c3c48f9 (Loan Applications update)
 class PenaltyInDB(Base):
     __tablename__ = "penalty_interests"
     id              = Column(Integer, primary_key=True, autoincrement=True)

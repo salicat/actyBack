@@ -1,14 +1,4 @@
 from typing import Optional
-<<<<<<< HEAD
-from fastapi import APIRouter, Depends, HTTPException, Header
-from sqlalchemy.orm import Session
-from db.db_connection import get_db
-from db.all_db import PropInDB, UserInDB, LogsInDb
-from models.property_models import PropCreate, StatusUpdate
-from datetime import datetime, timedelta
-import jwt
-
-=======
 from fastapi import APIRouter, Depends, HTTPException, UploadFile, File as FastAPIFile, Form, Header
 from sqlalchemy.orm import Session
 from db.db_connection import get_db
@@ -21,7 +11,6 @@ import jwt
 import os
 import shutil
 import json
->>>>>>> c3c48f9 (Loan Applications update)
 
 utc_now                 = datetime.utcnow()
 utc_offset              = timedelta(hours=-5)
@@ -45,93 +34,6 @@ def decode_jwt(token):
     except Exception as e:
         raise HTTPException(status_code=401, detail=str(e))
 
-<<<<<<< HEAD
-
-@router.post("/property/create/", response_model=PropCreate)
-def create_property(property_data: PropCreate, db: Session = Depends(get_db), token: str = Header(None)):
-    if not token:
-        # Log unauthorized access attempt
-        log_entry = LogsInDb(
-            action="User Alert",
-            timestamp=local_timestamp_str,
-            message="Unauthorized property creation attempt (Token not provided)",
-            user_id=None
-        )
-        db.add(log_entry)
-        db.commit()
-
-        raise HTTPException(status_code=401, detail="Token not provided")
-
-    decoded_token = decode_jwt(token)
-    role_from_token = decoded_token.get("role")
-    user_id_from_token = decoded_token.get("id")
-
-    if role_from_token is None:
-        # Log unauthorized access attempt
-        log_entry = LogsInDb(
-            action="User Alert",
-            timestamp=local_timestamp_str,
-            message="Unauthorized property creation attempt (Invalid or missing role in the token)",
-            user_id=None
-        )
-        db.add(log_entry)
-        db.commit()
-
-        raise HTTPException(status_code=403, detail="Token is missing or invalid")
-
-    if role_from_token not in ["admin", "debtor"]:
-        # Log unauthorized access attempt
-        log_entry = LogsInDb(
-            action="User Alert",
-            timestamp=local_timestamp_str,
-            message="Unauthorized property creation attempt (Insufficient permissions)",
-            user_id=None
-        )
-        db.add(log_entry)
-        db.commit()
-
-        raise HTTPException(status_code=403, detail="No tienes permiso para crear propiedades")
-
-    matricula_id = property_data.matricula_id
-    property_exists = db.query(PropInDB).filter(PropInDB.matricula_id == matricula_id).first()
-
-    if property_exists:
-        # Log property creation attempt with duplicate matricula_id
-        log_entry = LogsInDb(
-            action="Property Creation Failed",
-            timestamp=local_timestamp_str,
-            message=f"Property creation failed (Duplicate matricula_id: {matricula_id})",
-            user_id=user_id_from_token
-        )
-        db.add(log_entry)
-        db.commit()
-
-        raise HTTPException(status_code=400, detail="Property with this matricula_id already exists")
-
-    # Set default property values
-    new_property = PropInDB(
-        **property_data.dict()
-    )
-    
-    # Set default property values specifically
-    new_property.prop_status = "received"
-    new_property.comments = "study"
-
-    # Log successful property creation
-    log_entry = LogsInDb(
-        action="Property Created",
-        timestamp=local_timestamp_str,
-        message=f"Property created with matricula_id: {matricula_id}",
-        user_id=user_id_from_token
-    )
-    db.add(log_entry)
-
-    db.add(new_property)
-    db.commit()
-    db.refresh(new_property)
-
-    return PropCreate(**new_property.__dict__)
-=======
 @router.post("/property/create/", response_model=PropCreate)
 async def create_property(
     tax_document: UploadFile = FastAPIFile(...), 
@@ -262,7 +164,6 @@ def save_file_to_db(db: Session, entity_type: str, entity_id: int, file_type: st
     
     
 
->>>>>>> c3c48f9 (Loan Applications update)
 
 
 
@@ -296,11 +197,7 @@ def retrieve_property(id_number: str, db: Session = Depends(get_db)):
 
 
 
-<<<<<<< HEAD
-@router.get("/properties/{status}")   #LOGS #TOKEN-ROLE
-=======
 @router.get("/properties/{status}")   #LOGS #TOKEN-ROLE # posted, selected, funded, mortgage
->>>>>>> c3c48f9 (Loan Applications update)
 def get_properties_by_status(status: str, db: Session = Depends(get_db), token: str = Header(None)):
     if not token:
         # Log unauthorized access attempt
@@ -361,11 +258,7 @@ def get_properties_by_status(status: str, db: Session = Depends(get_db), token: 
     return properties
 
 
-<<<<<<< HEAD
-#LOGS #TOKEN-ROLE
-=======
 #LOGS #TOKEN-ROLE 
->>>>>>> c3c48f9 (Loan Applications update)
 @router.put("/property/update/status/{matricula_id}", response_model=PropCreate)  # posted, selected, funded, mortgage
 def update_property_status(matricula_id: str, status_update: StatusUpdate, db: Session = Depends(get_db), token: str = Header(None)):
     if not token:
@@ -377,11 +270,7 @@ def update_property_status(matricula_id: str, status_update: StatusUpdate, db: S
             user_id     = None  # You can leave user_id as None for unauthorized access
         )
         db.add(log_entry)
-<<<<<<< HEAD
-        db.commit()
-=======
         db.commit() 
->>>>>>> c3c48f9 (Loan Applications update)
         raise HTTPException(status_code=401, detail="Token not provided")
 
     decoded_token       = decode_jwt(token)
@@ -432,13 +321,6 @@ def update_property_status(matricula_id: str, status_update: StatusUpdate, db: S
 
     return PropCreate(**property.__dict__)
 
-<<<<<<< HEAD
-
-
-
-
-
-=======
 @router.put("/property/rate_check/{matricula_id}", response_model=PropCreate)  # posted, selected, funded, mortgage
 def update_property_status(matricula_id: str, status_update: StatusUpdate, db: Session = Depends(get_db), token: str = Header(None)):
     if not token:
@@ -500,4 +382,3 @@ def update_property_status(matricula_id: str, status_update: StatusUpdate, db: S
     db.refresh(property)
 
     return PropCreate(**property.__dict__)
->>>>>>> c3c48f9 (Loan Applications update)

@@ -13,9 +13,6 @@ class UserIn(BaseModel):
     user_department : str
     id_number       : str
     agent           : Optional [str]= None
-<<<<<<< HEAD
-
-=======
     
 class UserInfoUpdate(BaseModel):
     legal_address   :Optional [str]= None,
@@ -26,7 +23,6 @@ class UserInfoUpdate(BaseModel):
     bank_name       :Optional [str]= None,
     bank_account    :Optional [str]= None,
     account_number  :Optional [str]= None,
->>>>>>> c3c48f9 (Loan Applications update)
 
 class UserAuth(BaseModel):
     email       : str
