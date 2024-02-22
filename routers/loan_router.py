@@ -1,0 +1,233 @@
+from typing import Optional
+from fastapi import APIRouter, Depends, HTTPException, UploadFile, File, Form, Header
+from sqlalchemy.orm import Session
+from sqlalchemy.orm import aliased
+from db.db_connection import get_db
+from db.all_db import PropInDB, UserInDB, LogsInDb, LoanProgress, File 
+from models.property_models import PropCreate, StatusUpdate
+from models.loan_prog_models import LoanProgressInfo, LoanProgressUpdate
+from datetime import datetime, timedelta
+from sqlalchemy.sql import func
+import jwt
+ 
+
+utc_now                 = datetime.utcnow()
+utc_offset              = timedelta(hours=-5)
+local_now               = utc_now + utc_offset
+local_timestamp_str     = local_now.strftime('%Y-%m-%d %H:%M:%S.%f')
+
+SECRET_KEY                  = "8/8"
+ALGORITHM                   = "HS256"
+ACCESS_TOKEN_EXPIRE_MINUTES = 30
+
+router = APIRouter()
+
+def decode_jwt(token):
+    try:
+        payload = jwt.decode(token, SECRET_KEY, algorithms=[ALGORITHM])
+        return payload
+    except jwt.ExpiredSignatureError:
+        raise HTTPException(status_code=401, detail="Token has expired")
+    except jwt.DecodeError:
+        raise HTTPException(status_code=401, detail="Could not decode token")
+    except Exception as e:
+        raise HTTPException(status_code=401, detail=str(e))
+    
+
+@router.get("/loan_progress/applications/")
+async def get_loan_applications(db: Session = Depends(get_db), token: str = Header(None)):
+    
+    if not token:
+        raise HTTPException(status_code=401, detail="Token not provided")
+
+    decoded_token = decode_jwt(token)
+    role_from_token = decoded_token.get("role")
+    user_id_from_token = decoded_token.get("id")
+
+    if role_from_token is None:
+        raise HTTPException(status_code=403, detail="Token is missing or invalid")
+
+    if role_from_token not in ["admin"]:
+        raise HTTPException(status_code=403, detail="Not authorized to view loan applications")
+
+    # Retrieve the latest entry for each property
+    subquery = (
+        db.query(
+            LoanProgress.property_id, 
+            func.max(LoanProgress.id).label("max_id")
+        )
+        .group_by(LoanProgress.property_id)
+        .subquery()
+    )
+
+    applications = (
+        db.query(LoanProgress)
+        .join(subquery, LoanProgress.id == subquery.c.max_id)
+        .all()
+    )
+
+    if not applications:
+        raise HTTPException(status_code=404, detail="No loan applications found")
+    
+    application_data = []
+    for app in applications:
+        property_info = db.query(PropInDB).filter(PropInDB.id == app.property_id).first()
+        if property_info:
+            owner_info = db.query(UserInDB).filter(UserInDB.id_number == property_info.owner_id).first()
+            application_data.append({
+                "matricula_id"  : property_info.matricula_id,
+                "owner_id"      : property_info.owner_id,
+                "owner_username": owner_info.username if owner_info else None,
+                "status"        : app.status,
+                "last_date"     : app.date,
+                "notes"         : app.notes
+            })
+
+    # Log the action after successful retrieval
+    log_entry = LogsInDb(
+        action      = "Loan Applications Retrieved", 
+        timestamp   = datetime.now(), 
+        message     = f"Retrieved {len(application_data)} loan applications", 
+        user_id     = user_id_from_token)
+    db.add(log_entry)
+    db.commit()
+    
+    return application_data
+
+
+@router.get("/loan_app/detail/{matricula_id}")
+async def get_loan_application_details(matricula_id: str, db: Session = Depends(get_db), token: str = Header(None)):
+    
+    if not token:
+        raise HTTPException(status_code=401, detail="Token not provided")
+
+    decoded_token = decode_jwt(token)
+    role_from_token = decoded_token.get("role")
+    user_id_from_token = decoded_token.get("id")
+
+    if role_from_token is None:
+        raise HTTPException(status_code=403, detail="Token is missing or invalid")
+
+    if role_from_token not in ["admin", "debtor"]:
+        raise HTTPException(status_code=403, detail="Not authorized to view loan application details")
+
+    property_detail = db.query(PropInDB).filter(PropInDB.matricula_id == matricula_id).first()
+    if not property_detail:
+        raise HTTPException(status_code=404, detail="Property not found")
+
+    loan_progress_entries = db.query(LoanProgress).filter(LoanProgress.property_id == property_detail.id).all()
+
+    credit_detail = []
+
+    for entry in loan_progress_entries:
+        credit_detail.append({
+            "date": entry.date,
+            "status": entry.status,
+            "notes": entry.notes,
+            "updated_by": entry.updated_by
+        })
+        
+    documents = (
+                db.query(File)
+                .filter(File.entity_type == "property", File.entity_id == property_detail.id)
+                .all()
+            )
+
+    property_info = []
+
+    property_info.append({
+        "owner_id": property_detail.owner_id,
+        "matricula_id": property_detail.matricula_id,
+        "address": property_detail.address,
+        "neighbourhood": property_detail.neighbourhood,
+        "city": property_detail.city,
+        "department": property_detail.department,
+        "strate": property_detail.strate,
+        "area": property_detail.area,
+        "type": property_detail.type,
+        "tax_valuation": property_detail.tax_valuation,
+        "loan_solicited": property_detail.loan_solicited,
+        "rate_proposed": property_detail.rate_proposed,
+        "evaluation": property_detail.evaluation,
+        "prop_status": property_detail.prop_status,
+        "comments": property_detail.comments,
+        "documents"     : [
+                    {
+                        "file_type": doc.file_type,
+                        "file_location": doc.file_location
+                    }
+                    for doc in documents
+                ]
+    })
+
+    # Log the action after successful retrieval
+    log_entry = LogsInDb(action="Loan Application Detail Retrieved", timestamp=datetime.now(), message=f"Retrieved loan application details for matricula_id: {matricula_id}", user_id=user_id_from_token)
+    db.add(log_entry)
+    db.commit()
+
+    return {
+        "credit_detail": credit_detail,
+        "property_detail": property_info
+    }
+
+
+
+@router.post("/loan_progress/update/{matricula_id}")
+async def update_loan_application(matricula_id: str, update_data: dict, db: Session = Depends(get_db), token: str = Header(None)):
+    
+    if not token:
+        raise HTTPException(status_code=401, detail="Token not provided")
+
+    decoded_token       = decode_jwt(token)
+    role_from_token     = decoded_token.get("role")
+    user_id_from_token  = decoded_token.get("id")
+
+    if role_from_token is None or role_from_token not in ["admin"]:
+        raise HTTPException(status_code=403, detail="Not authorized to update loan application")
+
+    property_detail = db.query(PropInDB).filter(PropInDB.matricula_id == matricula_id).first()
+    if not property_detail:
+        raise HTTPException(status_code=404, detail="Property not found")
+
+    # Ensure the status and notes are properly extracted from the update_data
+    status          = update_data.get("status", "")
+    user_id         = user_id_from_token
+    notes           = update_data.get("notes", "") 
+    current_date    = local_timestamp_str
+
+    # Update property details as needed
+    prop_status     = update_data.get("prop_status")
+    rate_proposed   = update_data.get("rate_proposed")
+    evaluation      = update_data.get("evaluation")
+    final_status    = update_data.get("final_status")
+
+    if prop_status:
+        property_detail.prop_status = prop_status
+
+    if rate_proposed is not None:
+        property_detail.rate_proposed = rate_proposed
+
+    if evaluation:
+        property_detail.evaluation = evaluation
+
+    if final_status:
+        property_detail.comments = final_status
+
+    db.add(property_detail)
+
+    # Create a new LoanProgress entry with the current date and provided notes
+    new_loan_progress = LoanProgress(
+        property_id = property_detail.id, 
+        date        = current_date, 
+        status      = status, 
+        notes       = notes,  
+        updated_by  = user_id_from_token
+    )
+    db.add(new_loan_progress)
+
+    log_entry = LogsInDb(action="Loan Application Updated", timestamp=datetime.now(), message=f"Updated loan application for matricula_id: {matricula_id} with status: {status}", user_id=user_id_from_token)
+    db.add(log_entry)
+
+    db.commit()
+
+    return {"message": "Loan application updated successfully"}

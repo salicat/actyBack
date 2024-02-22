@@ -1,7 +1,11 @@
 from pydantic import BaseModel
 from datetime import date
 from typing import Optional
+<<<<<<< HEAD
 
+=======
+  
+>>>>>>> c3c48f9 (Loan Applications update)
 class PenaltyCreate(BaseModel): 
     month           : date 
     penalty_rate    : float

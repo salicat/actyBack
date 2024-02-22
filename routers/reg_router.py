@@ -37,6 +37,7 @@ router = APIRouter()
 
 def reg_to_dict(reg):
         return {
+<<<<<<< HEAD
             "id": reg.id,
             "mortgage_id": reg.mortgage_id,
             "lender_id": reg.lender_id,
@@ -48,6 +49,19 @@ def reg_to_dict(reg):
             "min_payment": reg.min_payment,
             "limit_date": reg.limit_date,
             "to_main_balance": reg.to_main_balance,
+=======
+            "id"                : reg.id,
+            "mortgage_id"       : reg.mortgage_id,
+            "lender_id"         : reg.lender_id,
+            "debtor_id"         : reg.debtor_id,
+            "date"              : reg.date,
+            "concept"           : reg.concept,
+            "amount"            : reg.amount,
+            "penalty"           : reg.penalty,
+            "min_payment"       : reg.min_payment,
+            "limit_date"        : reg.limit_date,
+            "to_main_balance"   : reg.to_main_balance,
+>>>>>>> c3c48f9 (Loan Applications update)
             "comprobante": reg.comprobante,
             "payment_status": reg.payment_status,
             "comment": reg.comment,

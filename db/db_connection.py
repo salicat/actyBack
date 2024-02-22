@@ -11,7 +11,11 @@ SessionLocal = sessionmaker(autocommit=False,
                             bind=engine)
 
 def get_db():
+<<<<<<< HEAD
     db = SessionLocal()
+=======
+    db = SessionLocal() 
+>>>>>>> c3c48f9 (Loan Applications update)
     try:
         yield db
     finally:
