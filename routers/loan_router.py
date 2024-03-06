@@ -9,6 +9,7 @@ from models.loan_prog_models import LoanProgressInfo, LoanProgressUpdate
 from datetime import datetime, timedelta
 from sqlalchemy.sql import func
 import jwt
+import re
  
 
 utc_now                 = datetime.utcnow()
@@ -34,6 +35,7 @@ def decode_jwt(token):
         raise HTTPException(status_code=401, detail=str(e))
     
 
+
 @router.get("/loan_progress/applications/")
 async def get_loan_applications(db: Session = Depends(get_db), token: str = Header(None)):
     
@@ -43,28 +45,52 @@ async def get_loan_applications(db: Session = Depends(get_db), token: str = Head
     decoded_token = decode_jwt(token)
     role_from_token = decoded_token.get("role")
     user_id_from_token = decoded_token.get("id")
+    user_pk_from_token = decoded_token.get("pk")
 
     if role_from_token is None:
         raise HTTPException(status_code=403, detail="Token is missing or invalid")
 
-    if role_from_token not in ["admin"]:
+    if role_from_token not in ["admin", "agent"]:
         raise HTTPException(status_code=403, detail="Not authorized to view loan applications")
 
-    # Retrieve the latest entry for each property
-    subquery = (
-        db.query(
-            LoanProgress.property_id, 
-            func.max(LoanProgress.id).label("max_id")
-        )
-        .group_by(LoanProgress.property_id)
-        .subquery()
-    )
+    applications = []
 
-    applications = (
-        db.query(LoanProgress)
-        .join(subquery, LoanProgress.id == subquery.c.max_id)
-        .all()
-    )
+    if role_from_token == "admin":
+        # Existing logic for admins to retrieve all applications
+        subquery = (
+            db.query(
+                LoanProgress.property_id, 
+                func.max(LoanProgress.id).label("max_id")
+            )
+            .group_by(LoanProgress.property_id)
+            .subquery()
+        )
+
+        applications = (
+            db.query(LoanProgress)
+            .join(subquery, LoanProgress.id == subquery.c.max_id)
+            .all()
+        )
+    
+    elif role_from_token == "agent":
+        # Modified logic for agents to retrieve applications for their users
+        subquery = (
+            db.query(
+                LoanProgress.property_id, 
+                func.max(LoanProgress.id).label("max_id")
+            )
+            .join(PropInDB, PropInDB.id == LoanProgress.property_id)
+            .join(UserInDB, UserInDB.id_number == PropInDB.owner_id)
+            .filter(UserInDB.added_by == user_pk_from_token)
+            .group_by(LoanProgress.property_id)
+            .subquery()
+        )
+
+        applications = (
+            db.query(LoanProgress)
+            .join(subquery, LoanProgress.id == subquery.c.max_id)
+            .all()
+        )
 
     if not applications:
         raise HTTPException(status_code=404, detail="No loan applications found")
@@ -84,8 +110,9 @@ async def get_loan_applications(db: Session = Depends(get_db), token: str = Head
             })
 
     # Log the action after successful retrieval
+    action_description = "Loan Applications Retrieved by Admin" if role_from_token == "admin" else "Loan Applications Retrieved by Agent"
     log_entry = LogsInDb(
-        action      = "Loan Applications Retrieved", 
+        action      = action_description, 
         timestamp   = datetime.now(), 
         message     = f"Retrieved {len(application_data)} loan applications", 
         user_id     = user_id_from_token)
@@ -95,9 +122,12 @@ async def get_loan_applications(db: Session = Depends(get_db), token: str = Head
     return application_data
 
 
+
 @router.get("/loan_app/detail/{matricula_id}")
 async def get_loan_application_details(matricula_id: str, db: Session = Depends(get_db), token: str = Header(None)):
     
+    print(f"Processed matricula_id: '{matricula_id}'")
+
     if not token:
         raise HTTPException(status_code=401, detail="Token not provided")
 
@@ -108,10 +138,14 @@ async def get_loan_application_details(matricula_id: str, db: Session = Depends(
     if role_from_token is None:
         raise HTTPException(status_code=403, detail="Token is missing or invalid")
 
-    if role_from_token not in ["admin", "debtor"]:
+    if role_from_token not in ["admin", "debtor", "agent"]:
         raise HTTPException(status_code=403, detail="Not authorized to view loan application details")
 
-    property_detail = db.query(PropInDB).filter(PropInDB.matricula_id == matricula_id).first()
+    normalized_input_matricula_id = ''.join(e for e in matricula_id if e.isalnum() or e in ['-']).lower()
+
+    # Retrieve all properties then filter in Python (Consider optimizing based on your actual dataset size and indexing)
+    potential_properties = db.query(PropInDB).all()
+    property_detail = next((prop for prop in potential_properties if ''.join(e for e in prop.matricula_id if e.isalnum() or e in ['-']).lower() == normalized_input_matricula_id), None)
     if not property_detail:
         raise HTTPException(status_code=404, detail="Property not found")
 
@@ -153,8 +187,9 @@ async def get_loan_application_details(matricula_id: str, db: Session = Depends(
         "comments": property_detail.comments,
         "documents"     : [
                     {
-                        "file_type": doc.file_type,
-                        "file_location": doc.file_location
+                        "id"            : doc.id,
+                        "file_type"     : doc.file_type,
+                        "file_location" : doc.file_location 
                     }
                     for doc in documents
                 ]

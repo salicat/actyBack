@@ -5,8 +5,8 @@ from db.db_connection import get_db
 from db.all_db import PropInDB, UserInDB, LogsInDb, LoanProgress
 from db.all_db import File
 from models.property_models import PropCreate, StatusUpdate
-from models.filemodels import FileUpload
 from datetime import datetime, timedelta
+from sqlalchemy.orm import joinedload
 import jwt
 import os
 import shutil
@@ -36,11 +36,11 @@ def decode_jwt(token):
 
 @router.post("/property/create/", response_model=PropCreate)
 async def create_property(
-    tax_document: UploadFile = FastAPIFile(...), 
-    property_photo: UploadFile = FastAPIFile(...), 
-    property_data: str = Form(...),
-    db: Session = Depends(get_db), 
-    token: str = Header(None)
+    tax_document    : UploadFile    = FastAPIFile(...), 
+    property_photo  : UploadFile    = FastAPIFile(...), 
+    property_data   : str           = Form(...),
+    db              : Session       = Depends(get_db), 
+    token           : str           = Header(None)
 ):
 
     property_data = json.loads(property_data)
@@ -98,7 +98,7 @@ async def create_property(
     
     new_loan_progress = LoanProgress(
         property_id = new_property.id,
-        date        = local_now.date(),
+        date        = local_timestamp_str,
         status      = "study",
         user_id     = user_id_from_token,  # Assuming the token contains the user ID initiating the loan progress
         notes       = "Initial loan progress entry",
@@ -251,12 +251,58 @@ def get_properties_by_status(status: str, db: Session = Depends(get_db), token: 
     db.add(log_entry)
     db.commit()
 
-    properties = db.query(PropInDB).filter(PropInDB.prop_status == status).all()
+    properties_data = []
 
-    if not properties:
-        return []
-    return properties
+    # Include a join to the File table to get the property photo
+    properties = (
+        db.query(PropInDB)
+        .options(joinedload(PropInDB.loan_progress))
+        .filter(PropInDB.prop_status == status)
+        .all()
+    )
 
+    for property in properties:
+        # Find the associated 'property_photo' for the current property
+        property_photo = (
+            db.query(File)
+            .filter_by(entity_type='property', entity_id=property.id, file_type='property_photo')
+            .first()
+        )
+        
+        # Add property details including the photo URL if available
+        properties_data.append({
+            "id": property.id,
+            "matricula_id": property.matricula_id,
+            "address": property.address,
+            "neighbourhood": property.neighbourhood,
+            "city": property.city,
+            "department": property.department,
+            "strate": property.strate,
+            "area": property.area,
+            "type": property.type,
+            "tax_valuation": property.tax_valuation,
+            "loan_solicited": property.loan_solicited,
+            "rate_proposed": property.rate_proposed,
+            "evaluation": property.evaluation,
+            "prop_status": property.prop_status,
+            "comments": property.comments,
+            "property_photo": property_photo.file_location if property_photo else None
+        })
+
+    # Log the successful access by admin or lender
+    log_entry = LogsInDb(
+        action      = "Properties by Status Retrieved",
+        timestamp   = local_timestamp_str,  # Make sure local_timestamp_str is properly defined
+        message     = f"User accessed properties with status: {status}",
+        user_id     = decoded_token.get("id")
+    )
+    db.add(log_entry)
+    db.commit()
+
+    if not properties_data:
+        raise HTTPException(status_code=404, detail="No properties found with the given status")
+
+    return properties_data
 
 #LOGS #TOKEN-ROLE 
 @router.put("/property/update/status/{matricula_id}", response_model=PropCreate)  # posted, selected, funded, mortgage

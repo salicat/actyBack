@@ -16,7 +16,7 @@ class UserInDB(Base):
     id_number       = Column(String, unique=True, index=True) #this will need a file
     tax_id          = Column(String, unique=True) #this will need a file
     score           = Column(String)
-    user_status     = Column(String)
+    user_status     = Column(String)  #/ incomplete / complete / complete and verified    
     bank_account    = Column(String)
     account_number  = Column(String)
     bank_name       = Column(String)

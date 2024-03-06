@@ -1,12 +1,15 @@
-from fastapi import Depends, APIRouter, HTTPException, Header
+from fastapi import Depends, APIRouter, HTTPException, Header, UploadFile, File as FastAPIFile, Form
 from sqlalchemy.orm import Session 
 from db.db_connection import get_db
-from db.all_db import UserInDB, MortgageInDB, LogsInDb, RegsInDb, PropInDB, PenaltyInDB
+from db.all_db import UserInDB, MortgageInDB, LogsInDb, RegsInDb, PropInDB, PenaltyInDB, File
 from models.user_models import UserIn, UserAuth, UserInfoAsk, UserInfoUpdate
 from passlib.context import CryptContext
 from jose import jwt
 from datetime import datetime, timedelta
 from sqlalchemy import func
+import json
+import os
+import shutil
 
 pwd_context = CryptContext(schemes=["bcrypt"], deprecated="auto")
 
@@ -20,6 +23,17 @@ ALGORITHM                   = "HS256"
 ACCESS_TOKEN_EXPIRE_MINUTES = 30
 
 router = APIRouter()
+
+def save_file_to_db(db: Session, entity_type: str, entity_id: int, file_type: str, file_location: str):
+    new_file = File(
+        entity_type=entity_type,
+        entity_id=entity_id,
+        file_type=file_type,
+        file_location=file_location)
+    db.add(new_file)
+    db.commit()
+    db.refresh(new_file)
+    return new_file
 
 @router.post("/user/create/")  #LOGS
 async def create_user(user_in: UserIn, db: Session = Depends(get_db)):
@@ -51,6 +65,11 @@ async def create_user(user_in: UserIn, db: Session = Depends(get_db)):
         user_department = user_in.user_department,
         id_number       = user_in.id_number
     )
+    if user_in.role.lower() == "agent":
+        new_user.agent = True
+        
+    new_user.user_status = "incomplete" #FIX NOT APPLIED ON AGENTS
+    
     db.add(new_user)
     db.commit()
     db.refresh(new_user)
@@ -78,12 +97,13 @@ async def create_user(user_in: UserIn, db: Session = Depends(get_db)):
 
     return user_data
 
-def create_access_token(username: str, role: str, user_id:str, user_pk:int , expires_delta: timedelta = None):
+def create_access_token(username: str, role: str, user_id:str, user_pk:int, user_st:str, expires_delta: timedelta = None):
     to_encode = {
         "sub"   : username,
         "role"  : role,
         "id"    : user_id,
-        "pk"    : user_pk
+        "pk"    : user_pk,
+        "st"    : user_st
     }
     if expires_delta:
         expire = datetime.utcnow() + expires_delta
@@ -104,6 +124,83 @@ def decode_jwt(token):
     except Exception as e:
         raise HTTPException(status_code=401, detail=str(e))
 
+@router.post("/affiliate/user/create/")  # Logs for Affiliate Users
+async def create_affiliate_user(
+    user_in: UserIn,
+    db: Session = Depends(get_db),
+    token: str = Header(None)
+):
+    # Check if token is provided
+    if not token:
+        raise HTTPException(status_code=401, detail="Token not provided")
+
+    # Decode token to extract role and id
+    decoded_token = decode_jwt(token)
+    role_from_token = decoded_token.get("role")
+    user_id_from_token = decoded_token.get("id")
+    agent_id = decoded_token.get("pk")
+
+    # Check if role is valid for creating affiliate users
+    if role_from_token.lower() not in ["admin", "agent"]:
+        raise HTTPException(status_code=403, detail="Unauthorized to create affiliate users")
+
+    # Check if role is allowed
+    allowed_roles = ["admin", "lender", "debtor", "agent"]  
+    if user_in.role.lower() not in allowed_roles:
+        raise HTTPException(status_code=400, detail="Invalid role. Allowed roles are: admin, lender, debtor, agent")
+
+    # Check for existing users with the same credentials
+    existing_user = db.query(UserInDB).filter(UserInDB.username == user_in.username).first()
+    if existing_user:
+        raise HTTPException(status_code=400, detail="Usuario ya esta en uso")
+
+    existing_user = db.query(UserInDB).filter(UserInDB.email == user_in.email).first()
+    if existing_user:
+        raise HTTPException(status_code=400, detail="Email ya esta en uso")
+
+    existing_user = db.query(UserInDB).filter(UserInDB.phone == user_in.phone).first()
+    if existing_user:
+        raise HTTPException(status_code=400, detail="Nro telefonico ya fue registrado")
+
+    existing_user = db.query(UserInDB).filter(UserInDB.id_number == user_in.id_number).first()
+    if existing_user:
+        raise HTTPException(status_code=400, detail="Ya hay un usuario credo con ese ID")
+
+    hashed_password = pwd_context.hash(user_in.id_number )
+   
+    new_user = UserInDB(
+        role            = user_in.role,
+        username        = user_in.username,
+        email           = user_in.email,
+        hashed_password = hashed_password,
+        phone           = user_in.phone,
+        legal_address   = user_in.legal_address,
+        user_city       = user_in.user_city,
+        user_department = user_in.user_department,
+        id_number       = user_in.id_number,
+        added_by        = agent_id
+    )
+
+
+    new_user.agent = False    
+    new_user.user_status = "incomplete"    
+
+    db.add(new_user)
+    db.commit()
+    db.refresh(new_user)
+
+    log_entry = LogsInDb(
+        action="User Created",
+        timestamp=local_timestamp_str,
+        message=f"User with username '{user_in.username}' has been registered by {role_from_token}",
+        user_id=user_id_from_token
+    )
+    db.add(log_entry)
+    db.commit()
+
+    return {"message": f"Has creado el usuario '{user_in.username}'"}
+
+
 
 @router.post("/user/auth/")  #LOGS
 async def auth_user(user_au: UserAuth, db: Session = Depends(get_db)):
@@ -119,7 +216,7 @@ async def auth_user(user_au: UserAuth, db: Session = Depends(get_db)):
         db.add(log_entry)
         db.commit()
         raise HTTPException(status_code=404, detail="El usuario no existe")
-    
+        
     if not pwd_context.verify(user_au.password, user_in_db.hashed_password):
         # Log failed login attempt due to wrong password
         log_entry       = LogsInDb(
@@ -147,44 +244,76 @@ async def auth_user(user_au: UserAuth, db: Session = Depends(get_db)):
         role            = user_in_db.role,
         user_id         = user_in_db.id_number,
         user_pk         = user_in_db.id,
+        user_st         = user_in_db.user_status,
         expires_delta   = access_token_expires
     )
     response = {
         "Autenticado": True,
-        "access_token": access_token
+        "access_token": access_token,
+        "user_status" : user_in_db.user_status  #line added to stablish global variable
     }
     return response
 
-@router.get("/user/perfil/{user_info_ask}") #LOGS
+
+@router.get("/user/perfil/{user_info_ask}")  # LOGS
 async def get_mi_perfil(user_info_ask: str, db: Session = Depends(get_db)):
     user_info = db.query(UserInDB).filter_by(id_number=user_info_ask).first()
     if not user_info:
         raise HTTPException(status_code=404, detail="El usuario no existe")
 
+    
     log_entry = LogsInDb(
-        action      = "Profile Accessed",
-        timestamp   = local_timestamp_str,
-        message     = f"Profile accessed for user with ID '{user_info_ask}' (Username: {user_info.username})",
-        user_id     = user_info.id_number
+        action="Profile Accessed",
+        timestamp=datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
+        message=f"Profile accessed for user with ID '{user_info_ask}' (Username: {user_info.username})",
+        user_id=user_info.id_number
     )
     db.add(log_entry)
     db.commit()
 
-    user_info_dict = {
-        "username"        : user_info.username,
-        "email"           : user_info.email,       
-        "phone"           : user_info.phone, 
-        "legal_address"   : user_info.legal_address,
-        "user_city"       : user_info.user_city,
-        "user_department" : user_info.user_department,
-        "id_number"       : user_info.id_number,
-        "tax_id"          : user_info.tax_id,
-        "bank_name"       : user_info.bank_name,
-        "bank_account"    : user_info.bank_account,
-        "account_number"  : user_info.account_number
+    
+    user_files = db.query(File).filter(File.entity_id == user_info.id).all()  # Assuming 'entity_id' references 'UserInDB.id'
+    documents_status = {
+        "cedula_front": None,
+        "cedula_back": None,
+        "tax_id_file": None,
+        "bank_certification": None,
     }
 
+    # Update to check file existence and include path
+    for file in user_files:
+        file_key = None
+        if file.file_type == "cedula_front":
+            file_key = "cedula_front"
+        elif file.file_type == "cedula_back":
+            file_key = "cedula_back"
+        elif file.file_type == "tax_id_file":
+            file_key = "tax_id_file"
+        elif file.file_type == "bank_certification":
+            file_key = "bank_certification"
+        
+        if file_key:
+            documents_status[file_key] = {"uploaded": True, "path": file.file_location}
 
+    user_info_dict = {
+        "username": user_info.username,
+        "email": user_info.email,
+        "phone": user_info.phone,
+        "legal_address": user_info.legal_address,
+        "user_city": user_info.user_city,
+        "user_department": user_info.user_department,
+        "id_number": user_info.id_number,
+        "tax_id": user_info.tax_id,
+        "bank_name": user_info.bank_name,
+        "bank_account": user_info.bank_account,
+        "account_number": user_info.account_number,
+        "documents": [
+            {"name": "Cedula cara frontal", "key": "cedula_front", "uploaded": documents_status["cedula_front"] != None, "path": documents_status["cedula_front"]["path"] if documents_status["cedula_front"] else None},
+            {"name": "Cedula cara posterior", "key": "cedula_back", "uploaded": documents_status["cedula_back"] != None, "path": documents_status["cedula_back"]["path"] if documents_status["cedula_back"] else None},
+            {"name": "Rut", "key": "tax_id_file", "uploaded": documents_status["tax_id_file"] != None, "path": documents_status["tax_id_file"]["path"] if documents_status["tax_id_file"] else None},
+            {"name": "Certificacion bancaria", "key": "bank_certification", "uploaded": documents_status["bank_certification"] != None, "path": documents_status["bank_certification"]["path"] if documents_status["bank_certification"] else None},
+        ]
+    }
     return user_info_dict
 
 
@@ -274,38 +403,86 @@ async def get_user_info(user_info_ask: UserInfoAsk, db: Session = Depends(get_db
         }
     
 
-@router.get("/admin_panel/users/") #LOGS #TOKEN
-async def get_all_users(db: Session = Depends(get_db), token: str = Header(None)):
-    if token:
-        decoded_token   = decode_jwt(token)
-        role            = decoded_token.get("role")
-        user_id         = decoded_token.get("id")
-        
-        if role == "admin" or role == "agent":
-            log_entry = LogsInDb(
-                action      = "User Information Accessed",
-                timestamp   = local_timestamp_str,
-                message     = f"Users information accessed by {role} (User ID: {user_id})",
-                user_id     = user_id
-            )
-            db.add(log_entry)
-            db.commit()
-
-            users       = db.query(UserInDB).all() 
-            user_info   = []
-            for user in users:
-                user_info.append({
-                    "role"      : user.role,
-                    "username"  : user.username,
-                    "email"     : user.email,
-                    "phone"     : user.phone,
-                    "id_number" : user.id_number
-                })
-            return user_info
-        else:
-            raise HTTPException(status_code=403, detail="No tienes permiso de ver esta informacion")
-    else:
+@router.get("/admin_panel/users/")  # Logs for Admin and Agent, token required
+async def get_all_users(
+    db: Session = Depends(get_db),
+    token: str = Header(None)
+):
+    if not token:
         raise HTTPException(status_code=401, detail="Token not provided")
+
+    decoded_token = decode_jwt(token)
+    role = decoded_token.get("role")
+    user_id = decoded_token.get("id")
+    user_pk = decoded_token.get("pk")  # Added primary key of the agent
+
+    if role == "admin":
+        # Log user information access by admin
+        log_entry = LogsInDb(
+            action="User Information Accessed",
+            timestamp=local_timestamp_str,
+            message=f"Users information accessed by {role} (User ID: {user_id})",
+            user_id=user_id
+        )
+        db.add(log_entry)
+        db.commit()
+
+        # Retrieve all users
+        users       = db.query(UserInDB).all() 
+        user_info   = []
+        for user in users:
+            user_info.append({
+                "role"      : user.role,
+                "username"  : user.username,
+                "email"     : user.email,
+                "phone"     : user.phone,
+                "id_number" : user.id_number
+            })
+        return user_info
+
+    elif role == "agent":
+        # Log user information access by agent
+        log_entry = LogsInDb(
+            action="User Information Accessed",
+            timestamp=local_timestamp_str,
+            message=f"Users information accessed by {role} (User ID: {user_id})",
+            user_id=user_id
+        )
+        db.add(log_entry)
+        db.commit()
+
+        # Retrieve users added by the agent
+        users_added_by_agent = db.query(UserInDB).filter(UserInDB.added_by == user_pk).all()
+        user_info = []
+        for user in users_added_by_agent:
+            # Retrieve loan requests for each user
+            loan_requests = db.query(PropInDB).filter(PropInDB.owner_id == user.id_number).all()
+            solicitudes = [{
+                "property_id": request.id, # Assuming there's an ID field
+                "matricula_id": request.matricula_id,
+                "address": request.address,
+                "neighbourhood": request.neighbourhood,
+                "city": request.city,
+                "department": request.department,
+                "strate": request.strate,
+                "area": request.area,
+                "type": request.type,
+                "tax_valuation": request.tax_valuation,
+                "loan_solicited": request.loan_solicited
+                # Include any other fields from PropInDB here
+            } for request in loan_requests]
+            user_info.append({
+                "username": user.username,
+                "id_number": user.id_number,
+                "email": user.email,
+                "phone": user.phone,
+                "status": user.user_status,
+                "solicitudes": solicitudes if solicitudes else "Ninguna"
+            })
+        return user_info
+    else:
+        raise HTTPException(status_code=403, detail="No tienes permiso de ver esta información")
+
 
 
 
@@ -466,11 +643,33 @@ def get_all_registers(db: Session = Depends(get_db), token: str = Header(None)):
 @router.put("/update_user_info/{id_number}")
 async def update_user_info(
     id_number: str,
-    user_data: UserInfoUpdate,
+    tax_id_file: UploadFile = FastAPIFile(None),
+    cedula_front: UploadFile = FastAPIFile(None),
+    cedula_back: UploadFile = FastAPIFile(None),
+    bank_certification: UploadFile = FastAPIFile(None), 
+    user_data: str = Form(...),
     db: Session = Depends(get_db),
     token: str = Header(None)
 ):
+    print(f"Received form data for user {id_number}")
+    if tax_id_file: print(f"Received tax_id_file: {tax_id_file.filename}")
+    else: print("No file uploaded for tax_id_file")
+
+    if cedula_front: print(f"Received cedula_front: {cedula_front.filename}")
+    else: print("No file uploaded for cedula_front")
+
+    if cedula_back: print(f"Received cedula_back: {cedula_back.filename}")
+    else: print("No file uploaded for cedula_back")
+
+    if bank_certification: print(f"Received bank_certification: {bank_certification.filename}")
+    else: print("No file uploaded for bank_certification")
     
+    try:
+        data = json.loads(user_data)
+        print("User data:", data)
+    except json.JSONDecodeError as e:
+        print("Error parsing user_data:", str(e))
+        raise HTTPException(status_code=400, detail="Invalid JSON format for user_data")
     
     if not token:
         raise HTTPException(status_code=401, detail="Token not provided")
@@ -479,28 +678,46 @@ async def update_user_info(
     user_id_from_token = decoded_token.get("id")
 
     user = db.query(UserInDB).filter(UserInDB.id_number == id_number).first()
-
     if not user:
         raise HTTPException(status_code=404, detail="Usuario no encontrado")
 
-    # Log the user information update
+    # Parsing user_data from JSON
+    try:
+        data = json.loads(user_data)
+    except json.JSONDecodeError:
+        raise HTTPException(status_code=400, detail="Invalid JSON format for user_data")
+
+    # Update user information based on data
+    user.bank_account = data.get('bank_account', user.bank_account)
+    user.account_number = data.get('account_number', user.account_number)
+    user.bank_name = data.get('bank_name', user.bank_name)
+    user.tax_id = data.get('tax_id', user.tax_id)
+
+    upload_folder = './uploads'
+    os.makedirs(upload_folder, exist_ok=True)
+
+    # Process and save files
+    files = {
+        "tax_id_file": tax_id_file,
+        "cedula_front": cedula_front,
+        "cedula_back": cedula_back,
+        "bank_certification": bank_certification
+    }
+    for file_key, file in files.items():
+        if file:
+            _, file_ext = os.path.splitext(file.filename)
+            file_path = os.path.join(upload_folder, f"{id_number}_{file_key}{file_ext}")
+            with open(file_path, "wb") as buffer:
+                shutil.copyfileobj(file.file, buffer)
+            save_file_to_db(db, "user", user.id, file_key, file_path)
+
     log_entry = LogsInDb(
-        action      = "User Information Updated",
-        timestamp   = local_timestamp_str,
-        message     = f"Información actualizada para el usuario con ID: {id_number}",
-        user_id     = user_id_from_token
+        action="User Information Updated",
+        timestamp=datetime.now(),
+        message=f"Information updated for user with ID: {id_number}",
+        user_id=user_id_from_token
     )
     db.add(log_entry)
-
-    # Extract non-null fields from user_data
-    update_fields = {k: v for k, v in user_data.dict().items() if v is not None}
-
-    # Update user information
-    user_data = user_data.dict(exclude_unset=True)  # Exclude fields with default values
-    for field, value in update_fields.items():
-        setattr(user, field, value)
-
-    # Commit the changes to the database
     db.commit()
 
     return {"message": "Información de usuario actualizada correctamente"}

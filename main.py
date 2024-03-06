@@ -9,6 +9,7 @@ from routers.penalty_router import router as router_penalties
 from routers.logs_router import router as router_logs
 from routers.loan_router import router as loan_router
 from routers.upload_router import router as router_upload
+from routers.file_router import router as router_files
 from starlette.middleware.trustedhost import TrustedHostMiddleware
 
 actyval = FastAPI()
@@ -38,7 +39,8 @@ actyval.include_router(router_penalties)
 actyval.include_router(router_logs)
 actyval.include_router(loan_router)
 actyval.include_router(router_upload)
+actyval.include_router(router_files)
 
 
 # Mount the '/admin/uploads' path to serve static files from the './uploads/' directory
-actyval.mount("/admin/uploads", StaticFiles(directory="./uploads"), name="uploads")
+actyval.mount("/uploads", StaticFiles(directory="./uploads"), name="uploads")

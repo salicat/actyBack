@@ -30,9 +30,6 @@ def decode_jwt(token):
         raise HTTPException(status_code=401, detail=str(e))
     
 
-VALID_STATUSES = ["pending", "approved", "rejected"]
-upload_dir = "/Users/carloscortes/Documents/Activalores/ActyBack/uploads"
-
 router = APIRouter()
 
 def reg_to_dict(reg):
@@ -59,14 +56,7 @@ translate_status = {
 }
 
 
-@router.post("/upload_comprobante/") 
-def upload_comprobante(file: UploadFile = File(...)):
-    os.makedirs(upload_dir, exist_ok=True)
-    file_path = os.path.join(upload_dir, file.filename)
-    file_content = file.file.read()
-    with open(file_path, "wb") as file_object:
-        file_object.write(file_content)
-    return {"path": file_path, "content": file_content}
+
 
 
 @router.post("/mortgage_payment/register/")  #LOGS

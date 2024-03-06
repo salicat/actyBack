@@ -6,13 +6,14 @@ class UserIn(BaseModel):
     role            : str
     username        : str
     email           : str
-    hashed_password : str
+    hashed_password : Optional [str]= None
     phone           : str
     legal_address   : str
     user_city       : str
     user_department : str
     id_number       : str
     agent           : Optional [str]= None
+    added_by        : Optional [int]= None
     
 class UserInfoUpdate(BaseModel):
     legal_address   :Optional [str]= None,
