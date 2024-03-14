@@ -10,14 +10,14 @@ class UserInDB(Base):
     email           = Column(String, unique=True, index=True)
     hashed_password = Column(String, nullable=False)
     phone           = Column(String, unique=True) 
-    legal_address   = Column(String, nullable=False)
-    user_city       = Column(String, nullable=False)
-    user_department = Column(String, nullable=False)
+    legal_address   = Column(String, nullable=True)
+    user_city       = Column(String, nullable=True)
+    user_department = Column(String, nullable=True)
     id_number       = Column(String, unique=True, index=True) #this will need a file
     tax_id          = Column(String, unique=True) #this will need a file
     score           = Column(String)
     user_status     = Column(String)  #/ incomplete / complete / complete and verified    
-    bank_account    = Column(String)
+    account_type    = Column(String)
     account_number  = Column(String)
     bank_name       = Column(String)
     agent           = Column(Boolean, default=False)
@@ -47,8 +47,9 @@ class RegsInDb(Base):
     lender_id       = Column(String, ForeignKey("users.id_number"))
     debtor_id       = Column(String, ForeignKey("users.id_number"))
     date            = Column(Date)
+    paid            = Column(Integer) #NEW what user paid debits 
     concept         = Column(String)
-    amount          = Column(Integer)
+    amount          = Column(Integer) #what system charges credits
     penalty         = Column(Integer)
     min_payment     = Column(Integer) 
     limit_date      = Column(Date)
@@ -77,9 +78,9 @@ class PropInDB(Base):
     loan_solicited  = Column(Integer)
     rate_proposed   = Column(Float)
     evaluation      = Column(String)
-    prop_status     = Column(String)    # "received", "available", "selected", "process", "loaned"
-                                        # "available" is the only one that allows to create a mortgage
-    comments        = Column(String)    # "study", "approved"
+    study           = Column(String)    # NEW  "study" => "approved" 
+    prop_status     = Column(String)    # available when study is approved or loaned ONLY
+    comments        = Column(String)    # Loan tracking [received, analisis, concept, result, available]
 
     owner           = relationship("UserInDB", back_populates="owned_properties", foreign_keys=[owner_id])
     loan_progress   = relationship("LoanProgress", back_populates="property")
@@ -98,8 +99,9 @@ class MortgageInDB(Base):
     current_balance = Column(Integer)
     last_update     = Column(Date)
     monthly_payment = Column(Integer)
+    mortgage_stage  = Column(String) #NEW [solicited, iniciated, filled, active]    
     mortgage_status = Column(String) # active, debt_pending, lawyer
-    comments        = Column(String)  
+    comments        = Column(String) # "Mortgage process submited by user='...' "] when selected status = in process
 
     lender      = relationship("UserInDB", foreign_keys=[lender_id], back_populates="lent_mortgages")
     debtor      = relationship("UserInDB", foreign_keys=[debtor_id], back_populates="borrowed_mortgages")
@@ -111,7 +113,7 @@ class LoanProgress(Base):
     id          = Column(Integer, primary_key=True, autoincrement=True)
     date        = Column(Date)
     property_id = Column(Integer, ForeignKey('properties.id'))  
-    status      = Column(String) # "entry", "analisis", "concept", "result" 
+    status      = Column(String) #["study", ...] ["process", ...]  
     user_id     = Column(String, ForeignKey('users.id_number')) 
     notes       = Column(String, nullable=True)
     updated_by  = Column(String, ForeignKey('users.id_number'))  

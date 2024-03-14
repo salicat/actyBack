@@ -2,7 +2,7 @@ from fastapi import Depends, APIRouter, HTTPException, Header, UploadFile, File 
 from sqlalchemy.orm import Session 
 from db.db_connection import get_db
 from db.all_db import UserInDB, MortgageInDB, LogsInDb, RegsInDb, PropInDB, PenaltyInDB, File
-from models.user_models import UserIn, UserAuth, UserInfoAsk, UserInfoUpdate
+from models.user_models import UserIn, UserAuth, UserInfoAsk
 from passlib.context import CryptContext
 from jose import jwt
 from datetime import datetime, timedelta
@@ -35,46 +35,54 @@ def save_file_to_db(db: Session, entity_type: str, entity_id: int, file_type: st
     db.refresh(new_file)
     return new_file
 
-@router.post("/user/create/")  #LOGS
+@router.post("/user/create/")  # LOGS
 async def create_user(user_in: UserIn, db: Session = Depends(get_db)):
     allowed_roles = ["admin", "lender", "debtor", "agent"]  
     if user_in.role.lower() not in allowed_roles:
         raise HTTPException(status_code=400, detail="Invalid role. Allowed roles are: admin, lender, debtor, agent")
+    
     existing_user = db.query(UserInDB).filter(UserInDB.username == user_in.username).first()
     if existing_user:
         raise HTTPException(status_code=400, detail="Usuario ya esta en uso")
+    
     existing_user = db.query(UserInDB).filter(UserInDB.email == user_in.email).first()
     if existing_user:
         raise HTTPException(status_code=400, detail="Email ya esta en uso")
+    
     existing_user = db.query(UserInDB).filter(UserInDB.phone == user_in.phone).first()
     if existing_user:
         raise HTTPException(status_code=400, detail="Nro telefonico ya fue registrado")
+    
     existing_user = db.query(UserInDB).filter(UserInDB.id_number == user_in.id_number).first()
     if existing_user:
         raise HTTPException(status_code=400, detail="Ya hay un usuario credo con ese ID")
 
-    hashed_password = pwd_context.hash(user_in.hashed_password)
+    hashed_password = None
+    if user_in.hashed_password:
+        hashed_password = pwd_context.hash(user_in.hashed_password)
+    
     new_user = UserInDB(
         role            = user_in.role,
         username        = user_in.username,
         email           = user_in.email,
         hashed_password = hashed_password,
         phone           = user_in.phone,
-        legal_address   = user_in.legal_address,
-        user_city       = user_in.user_city,
+        legal_address   = user_in.legal_address if user_in.legal_address is not None else "",
+        user_city       = user_in.user_city if user_in.user_city is not None else "",  # Ensure user_city is not None
         user_department = user_in.user_department,
         id_number       = user_in.id_number
     )
-    if user_in.role.lower() == "agent":
-        new_user.agent = True
-        
-    new_user.user_status = "incomplete" #FIX NOT APPLIED ON AGENTS
+    
+    if user_in.agent is not None:
+        new_user.agent = user_in.agent
+    
+    new_user.user_status = "incomplete"  # FIX APPLIED ON AGENTS
     
     db.add(new_user)
     db.commit()
     db.refresh(new_user)
 
-    log_entry       = LogsInDb(
+    log_entry = LogsInDb(
         action      = "User Created",
         timestamp   = local_timestamp_str,
         message     = f"User with username '{user_in.username}' has been registered",
@@ -96,6 +104,9 @@ async def create_user(user_in: UserIn, db: Session = Depends(get_db)):
     }
 
     return user_data
+
+
+
 
 def create_access_token(username: str, role: str, user_id:str, user_pk:int, user_st:str, expires_delta: timedelta = None):
     to_encode = {
@@ -134,7 +145,7 @@ async def create_affiliate_user(
     if not token:
         raise HTTPException(status_code=401, detail="Token not provided")
 
-    # Decode token to extract role and id
+    # Decode token to extract role and id 
     decoded_token = decode_jwt(token)
     role_from_token = decoded_token.get("role")
     user_id_from_token = decoded_token.get("id")
@@ -296,17 +307,17 @@ async def get_mi_perfil(user_info_ask: str, db: Session = Depends(get_db)):
             documents_status[file_key] = {"uploaded": True, "path": file.file_location}
 
     user_info_dict = {
-        "username": user_info.username,
-        "email": user_info.email,
-        "phone": user_info.phone,
-        "legal_address": user_info.legal_address,
-        "user_city": user_info.user_city,
-        "user_department": user_info.user_department,
-        "id_number": user_info.id_number,
-        "tax_id": user_info.tax_id,
-        "bank_name": user_info.bank_name,
-        "bank_account": user_info.bank_account,
-        "account_number": user_info.account_number,
+        "username"          : user_info.username,
+        "email"             : user_info.email,
+        "phone"             : user_info.phone,
+        "legal_address"     : user_info.legal_address,
+        "user_city"         : user_info.user_city,
+        "user_department"   : user_info.user_department,
+        "id_number"         : user_info.id_number,
+        "tax_id"            : user_info.tax_id,
+        "bank_name"         : user_info.bank_name,
+        "account_type"      : user_info.account_type,
+        "account_number"    : user_info.account_number,
         "documents": [
             {"name": "Cedula cara frontal", "key": "cedula_front", "uploaded": documents_status["cedula_front"] != None, "path": documents_status["cedula_front"]["path"] if documents_status["cedula_front"] else None},
             {"name": "Cedula cara posterior", "key": "cedula_back", "uploaded": documents_status["cedula_back"] != None, "path": documents_status["cedula_back"]["path"] if documents_status["cedula_back"] else None},
@@ -412,17 +423,17 @@ async def get_all_users(
         raise HTTPException(status_code=401, detail="Token not provided")
 
     decoded_token = decode_jwt(token)
-    role = decoded_token.get("role")
+    role    = decoded_token.get("role")
     user_id = decoded_token.get("id")
     user_pk = decoded_token.get("pk")  # Added primary key of the agent
 
     if role == "admin":
         # Log user information access by admin
         log_entry = LogsInDb(
-            action="User Information Accessed",
-            timestamp=local_timestamp_str,
-            message=f"Users information accessed by {role} (User ID: {user_id})",
-            user_id=user_id
+            action      ="User Information Accessed",
+            timestamp   = local_timestamp_str,
+            message     = f"Users information accessed by {role} (User ID: {user_id})",
+            user_id     = user_id
         )
         db.add(log_entry)
         db.commit()
@@ -443,10 +454,10 @@ async def get_all_users(
     elif role == "agent":
         # Log user information access by agent
         log_entry = LogsInDb(
-            action="User Information Accessed",
-            timestamp=local_timestamp_str,
-            message=f"Users information accessed by {role} (User ID: {user_id})",
-            user_id=user_id
+            action      = "User Information Accessed",
+            timestamp   = local_timestamp_str,
+            message     = f"Users information accessed by {role} (User ID: {user_id})",
+            user_id     = user_id
         )
         db.add(log_entry)
         db.commit()
@@ -458,26 +469,26 @@ async def get_all_users(
             # Retrieve loan requests for each user
             loan_requests = db.query(PropInDB).filter(PropInDB.owner_id == user.id_number).all()
             solicitudes = [{
-                "property_id": request.id, # Assuming there's an ID field
-                "matricula_id": request.matricula_id,
-                "address": request.address,
-                "neighbourhood": request.neighbourhood,
-                "city": request.city,
-                "department": request.department,
-                "strate": request.strate,
-                "area": request.area,
-                "type": request.type,
-                "tax_valuation": request.tax_valuation,
+                "property_id"   : request.id, # Assuming there's an ID field
+                "matricula_id"  : request.matricula_id,
+                "address"       : request.address,
+                "neighbourhood" : request.neighbourhood,
+                "city"          : request.city,
+                "department"    : request.department,
+                "strate"        : request.strate,
+                "area"          : request.area,
+                "type"          : request.type,
+                "tax_valuation" : request.tax_valuation,
                 "loan_solicited": request.loan_solicited
                 # Include any other fields from PropInDB here
             } for request in loan_requests]
             user_info.append({
-                "username": user.username,
-                "id_number": user.id_number,
-                "email": user.email,
-                "phone": user.phone,
-                "status": user.user_status,
-                "solicitudes": solicitudes if solicitudes else "Ninguna"
+                "username"      : user.username,
+                "id_number"     : user.id_number,
+                "email"         : user.email,
+                "phone"         : user.phone,
+                "status"        : user.user_status,
+                "solicitudes"   : solicitudes if solicitudes else "Ninguna"
             })
         return user_info
     else:
@@ -489,29 +500,29 @@ async def get_all_users(
 @router.get("/admin_summary")
 def admin_summary(db: Session = Depends(get_db), token: str = Header(None)):
 
-    # Token verification
+    # Token verification 
     if not token:
         # Log unauthorized access attempt
         log_entry = LogsInDb(
-            action="User Alert",
-            timestamp=local_timestamp_str,
-            message="Unauthorized access attempt to admin summary (Token not provided)",
-            user_id=None
+            action      ="User Alert",
+            timestamp   = local_timestamp_str,
+            message     = "Unauthorized access attempt to admin summary (Token not provided)",
+            user_id     = None
         )
         db.add(log_entry)
         db.commit()
         raise HTTPException(status_code=401, detail="Token not provided")
 
-    decoded_token = decode_jwt(token)
+    decoded_token   = decode_jwt(token)
     role_from_token = decoded_token.get("role")
 
     if role_from_token != "admin":
         # Log unauthorized access attempt
         log_entry = LogsInDb(
-            action="User Alert",
-            timestamp=local_timestamp_str,
-            message="Unauthorized access attempt to admin summary (Insufficient privileges)",
-            user_id=decoded_token.get("id")
+            action      = "User Alert",
+            timestamp   = local_timestamp_str,
+            message     = "Unauthorized access attempt to admin summary (Insufficient privileges)",
+            user_id     = decoded_token.get("id")
         )
         db.add(log_entry)
         db.commit()
@@ -519,10 +530,12 @@ def admin_summary(db: Session = Depends(get_db), token: str = Header(None)):
  
     # Get total count of mortgages, registers, and users
     total_mortgages = db.query(func.count(MortgageInDB.id)).scalar()
-    total_users = db.query(func.count(UserInDB.id)).scalar()
+    total_users     = db.query(func.count(UserInDB.id)).scalar()
 
     # Get total amounts for mortgages and registers
     total_mortgage_amount = db.query(func.sum(MortgageInDB.current_balance)).scalar()
+    if not total_mortgage_amount :
+        total_mortgage_amount = 0
 
     # Get the number of pending payments
     pending_payments = db.query(func.count(RegsInDb.id)).filter(RegsInDb.payment_status == "pending").scalar()
@@ -533,11 +546,14 @@ def admin_summary(db: Session = Depends(get_db), token: str = Header(None)):
     # Get the number of mortgages with specific statuses
     debt_pending_mortgages = db.query(func.count(MortgageInDB.id)).filter(MortgageInDB.mortgage_status == "debt_pending").scalar()
     
+    lawyer_mortgages = db.query(func.count(MortgageInDB.id)).filter(MortgageInDB.mortgage_status == "debt_pending").scalar()
+    
+    
     # Get the number of users with specific roles
-    admin_users = db.query(func.count(UserInDB.id)).filter(UserInDB.role == "admin").scalar()
-    debtor_users = db.query(func.count(UserInDB.id)).filter(UserInDB.role == "debtor").scalar()
-    lender_users = db.query(func.count(UserInDB.id)).filter(UserInDB.role == "lender").scalar()
-    agent_users = db.query(func.count(UserInDB.id)).filter(UserInDB.role == "agent").scalar()
+    admin_users     = db.query(func.count(UserInDB.id)).filter(UserInDB.role == "admin").scalar()
+    debtor_users    = db.query(func.count(UserInDB.id)).filter(UserInDB.role == "debtor").scalar()
+    lender_users    = db.query(func.count(UserInDB.id)).filter(UserInDB.role == "lender").scalar()
+    agent_users     = db.query(func.count(UserInDB.id)).filter(UserInDB.role == "agent").scalar()
 
     # Get the last penalty set
     current_month = local_now.month
@@ -560,8 +576,9 @@ def admin_summary(db: Session = Depends(get_db), token: str = Header(None)):
         penalty_status = "vencido"
 
     # Get the number of properties with specific statuses
-    received_props = db.query(func.count(PropInDB.id)).filter(PropInDB.comments != "approved" or "rejected").scalar()
-    selected_props = db.query(func.count(PropInDB.id)).filter(PropInDB.prop_status == "selected").scalar()
+    received_props  = db.query(func.count(PropInDB.id)).filter(PropInDB.study != "approved").scalar()
+    posted_props    = db.query(func.count(PropInDB.id)).filter(PropInDB.study == "approved").scalar()
+    selected_props  = db.query(func.count(PropInDB.id)).filter(PropInDB.prop_status == "selected").scalar()
     
 
     # Construct the summary dictionary
@@ -572,27 +589,31 @@ def admin_summary(db: Session = Depends(get_db), token: str = Header(None)):
         "pending_payments"          : pending_payments,
         "active_mortgages"          : active_mortgages,
         "debt_pending_mortgages"    : debt_pending_mortgages,
+        "lawyer_mortgages"          : lawyer_mortgages,
         "admin_users"               : admin_users,
         "debtor_users"              : debtor_users,
         "lender_users"              : lender_users,
         "agent_users"               : agent_users,
         "last_penalty"              : penalty_status,
         "received_props"            : received_props,
+        "posted_props"              : posted_props,
         "selected_props"            : selected_props,
     }
 
 
     # Log successful access to admin summary
     log_entry = LogsInDb(
-        action="Admin Summary Accessed",
-        timestamp=local_timestamp_str,
-        message="Admin summary accessed successfully",
-        user_id=decoded_token.get("id")
+        action      = "Admin Summary Accessed",
+        timestamp   = local_timestamp_str,
+        message     = "Admin summary accessed successfully",
+        user_id     = decoded_token.get("id")
     )
     db.add(log_entry)
     db.commit()
 
     return summary
+
+
 
 @router.get("/all_registers")
 def get_all_registers(db: Session = Depends(get_db), token: str = Header(None)):
@@ -601,25 +622,25 @@ def get_all_registers(db: Session = Depends(get_db), token: str = Header(None)):
     if not token:
         # Log unauthorized access attempt
         log_entry = LogsInDb(
-            action="User Alert",
-            timestamp=local_timestamp_str,
-            message="Unauthorized access attempt to all registers (Token not provided)",
-            user_id=None
+            action      = "User Alert",
+            timestamp   = local_timestamp_str,
+            message     = "Unauthorized access attempt to all registers (Token not provided)",
+            user_id     = None
         )
         db.add(log_entry)
         db.commit()
         raise HTTPException(status_code=401, detail="Token not provided")
 
-    decoded_token = decode_jwt(token)
+    decoded_token   = decode_jwt(token)
     role_from_token = decoded_token.get("role")
 
     if role_from_token != "admin":
         # Log unauthorized access attempt
         log_entry = LogsInDb(
-            action="User Alert",
-            timestamp=local_timestamp_str,
-            message="Unauthorized access attempt to all registers (Insufficient privileges)",
-            user_id=decoded_token.get("id")
+            action      = "User Alert",
+            timestamp   = local_timestamp_str,
+            message     = "Unauthorized access attempt to all registers (Insufficient privileges)",
+            user_id     = decoded_token.get("id")
         )
         db.add(log_entry)
         db.commit()
@@ -630,10 +651,10 @@ def get_all_registers(db: Session = Depends(get_db), token: str = Header(None)):
 
     # Log successful access to all registers
     log_entry = LogsInDb(
-        action="All Registers Accessed",
-        timestamp=local_timestamp_str,
-        message="All registers accessed successfully",
-        user_id=decoded_token.get("id")
+        action      = "All Registers Accessed",
+        timestamp   = local_timestamp_str,
+        message     = "All registers accessed successfully",
+        user_id     = decoded_token.get("id")
     )
     db.add(log_entry)
     db.commit()
@@ -643,26 +664,14 @@ def get_all_registers(db: Session = Depends(get_db), token: str = Header(None)):
 @router.put("/update_user_info/{id_number}")
 async def update_user_info(
     id_number: str,
-    tax_id_file: UploadFile = FastAPIFile(None),
-    cedula_front: UploadFile = FastAPIFile(None),
-    cedula_back: UploadFile = FastAPIFile(None),
-    bank_certification: UploadFile = FastAPIFile(None), 
-    user_data: str = Form(...),
-    db: Session = Depends(get_db),
-    token: str = Header(None)
+    tax_id_file         : UploadFile = FastAPIFile(None),
+    cedula_front        : UploadFile = FastAPIFile(None),
+    cedula_back         : UploadFile = FastAPIFile(None),
+    bank_certification  : UploadFile = FastAPIFile(None), 
+    user_data           : str = Form(...),
+    db                  : Session = Depends(get_db),
+    token               : str = Header(None)
 ):
-    print(f"Received form data for user {id_number}")
-    if tax_id_file: print(f"Received tax_id_file: {tax_id_file.filename}")
-    else: print("No file uploaded for tax_id_file")
-
-    if cedula_front: print(f"Received cedula_front: {cedula_front.filename}")
-    else: print("No file uploaded for cedula_front")
-
-    if cedula_back: print(f"Received cedula_back: {cedula_back.filename}")
-    else: print("No file uploaded for cedula_back")
-
-    if bank_certification: print(f"Received bank_certification: {bank_certification.filename}")
-    else: print("No file uploaded for bank_certification")
     
     try:
         data = json.loads(user_data)
@@ -674,8 +683,8 @@ async def update_user_info(
     if not token:
         raise HTTPException(status_code=401, detail="Token not provided")
 
-    decoded_token = decode_jwt(token)
-    user_id_from_token = decoded_token.get("id")
+    decoded_token       = decode_jwt(token)
+    user_id_from_token  = decoded_token.get("id")
 
     user = db.query(UserInDB).filter(UserInDB.id_number == id_number).first()
     if not user:
@@ -688,34 +697,34 @@ async def update_user_info(
         raise HTTPException(status_code=400, detail="Invalid JSON format for user_data")
 
     # Update user information based on data
-    user.bank_account = data.get('bank_account', user.bank_account)
+    user.account_type   = data.get('account_type', user.account_type)
     user.account_number = data.get('account_number', user.account_number)
-    user.bank_name = data.get('bank_name', user.bank_name)
-    user.tax_id = data.get('tax_id', user.tax_id)
+    user.bank_name      = data.get('bank_name', user.bank_name)
+    user.tax_id         = data.get('tax_id', user.tax_id)
 
     upload_folder = './uploads'
     os.makedirs(upload_folder, exist_ok=True)
 
     # Process and save files
     files = {
-        "tax_id_file": tax_id_file,
-        "cedula_front": cedula_front,
-        "cedula_back": cedula_back,
+        "tax_id_file"       : tax_id_file,
+        "cedula_front"      : cedula_front,
+        "cedula_back"       : cedula_back,
         "bank_certification": bank_certification
     }
     for file_key, file in files.items():
         if file:
             _, file_ext = os.path.splitext(file.filename)
-            file_path = os.path.join(upload_folder, f"{id_number}_{file_key}{file_ext}")
+            file_path   = os.path.join(upload_folder, f"{id_number}_{file_key}{file_ext}")
             with open(file_path, "wb") as buffer:
                 shutil.copyfileobj(file.file, buffer)
             save_file_to_db(db, "user", user.id, file_key, file_path)
 
     log_entry = LogsInDb(
-        action="User Information Updated",
-        timestamp=datetime.now(),
-        message=f"Information updated for user with ID: {id_number}",
-        user_id=user_id_from_token
+        action      = "User Information Updated",
+        timestamp   = datetime.now(),
+        message     = f"Information updated for user with ID: {id_number}",
+        user_id     = user_id_from_token
     )
     db.add(log_entry)
     db.commit()

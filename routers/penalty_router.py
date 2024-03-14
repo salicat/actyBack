@@ -6,6 +6,7 @@ from db.db_connection import get_db
 from models.penalty_models import PenaltyCreate, CurrentPenalty, PenaltyRequest
 from db.all_db import PenaltyInDB, LogsInDb
 import os
+from dateutil.relativedelta import relativedelta
 import jwt
 
 router = APIRouter()
@@ -93,7 +94,6 @@ async def create_penalty(
 
 @router.get("/get_penalty_rates/")
 async def get_penalty_rates(db: Session = Depends(get_db), token: str = Header(None)):
-    # Token and role verification
     if not token:
         raise HTTPException(status_code=401, detail="Token not provided")
 
@@ -101,41 +101,36 @@ async def get_penalty_rates(db: Session = Depends(get_db), token: str = Header(N
     user_id_from_token = decoded_token.get("id")
     user_role = decoded_token.get("role")
 
-    # Check if the user has admin role
     if user_role != 'admin':
         raise HTTPException(status_code=403, detail="Access denied")
 
-    # Get the current date and calculate the start of the current month
-    current_date = datetime.now()
-    start_of_current_month = current_date.replace(day=1)
+    # Adjusted to use local time
+    utc_now = datetime.utcnow()
+    utc_offset = timedelta(hours=-5)
+    local_now = utc_now + utc_offset
+    start_of_current_month = local_now.replace(day=1, hour=0, minute=0, second=0, microsecond=0)
 
-    # Query the last 6 months of penalty rates
     penalty_rates = db.query(PenaltyInDB).filter(
-        PenaltyInDB.start_date >= (start_of_current_month - timedelta(days=182))
+        PenaltyInDB.start_date >= (start_of_current_month - relativedelta(months=6))
     ).order_by(PenaltyInDB.start_date).all()
 
-    # Prepare the response
     response = {}
     for month_back in range(5, -1, -1):
-        # Calculate the start of the month
-        month_date = (start_of_current_month - timedelta(days=month_back * 30)).replace(day=1)
+        month_date = start_of_current_month - relativedelta(months=month_back)
         month_str = month_date.strftime("%Y-%m")
 
-        # Find the penalty rate for the specific month
         rate = next((rate for rate in penalty_rates if rate.start_date.month == month_date.month and rate.start_date.year == month_date.year), None)
         response[month_str] = rate.penalty_rate if rate else "no definido"
 
-    # Log the access to penalty rates
     log_entry = LogsInDb(
-        action      = "Accessed Penalty Rates",
-        message     = "Admin accessed the last 6 months of penalty rates",
-        user_id     = user_id_from_token
+        action="Accessed Penalty Rates",
+        message="Admin accessed the last 6 months of penalty rates",
+        user_id=user_id_from_token
     )
     db.add(log_entry)
     db.commit()
 
     return response
-
 
 
 @router.get("/get_current_penalty/{month}/{year}")

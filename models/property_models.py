@@ -18,16 +18,21 @@ class PropCreate(BaseModel):
     loan_solicited  : int
     rate_proposed   : Optional[float] = None
     evaluation      : Optional[str] = None
+    study           : Optional[str] = None
     prop_status     : Optional[str] = None
     comments        : Optional[str] = None
 
 class PropUpStatus(BaseModel):
     id              : int
     status          : str #available, selected, process, loaned
+    study           : Optional[str] = None
     comments        : Optional[str] = None
 
 class StatusUpdate(BaseModel):
-    prop_status: str
+    prop_status     : str
+    study           : Optional[str] = None
+    comments        : Optional[str] = None
+
 
     class Config:
         orm_mode = True

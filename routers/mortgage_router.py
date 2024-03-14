@@ -2,7 +2,7 @@ from fastapi import APIRouter, Depends, HTTPException, Header
 from sqlalchemy.orm import Session
 from sqlalchemy import desc
 from db.db_connection import get_db
-from db.all_db import MortgageInDB, UserInDB, PropInDB, RegsInDb, PenaltyInDB, LogsInDb
+from db.all_db import MortgageInDB, UserInDB, PropInDB, RegsInDb, PenaltyInDB, LogsInDb, LoanProgress
 from models.mortgage_models import MortgageCreate
 from datetime import timedelta, date, datetime
 import jwt
@@ -220,9 +220,19 @@ def get_mortgages_by_debtor(debtor_id: str, db: Session = Depends(get_db)):
         for mortgage in mortgages:
             most_recent_reg = db.query(RegsInDb).filter(RegsInDb.mortgage_id == mortgage.id).order_by(desc(RegsInDb.id)).first()
             if most_recent_reg:
-                mortgage_data = {**mortgage.__dict__, "comprobante": None, "concept": None, "limit_date": None, "penalty": None, "payment_status": None, "amount": None, "to_main_balance": None, "date": None, "lender_id": None, "min_payment": None, "id": None, "comment": None}
-                mortgage_data.update({**most_recent_reg.__dict__, "last_registers_mortgage_id": most_recent_reg.mortgage_id})
+                # Start with a clean copy of mortgage.__dict__ excluding 'id'
+                mortgage_data = {k: v for k, v in mortgage.__dict__.items() if k != 'id'}
+
+                # Update with most_recent_reg.__dict__ excluding 'id'
+                reg_data = {k: v for k, v in most_recent_reg.__dict__.items() if k != 'id'}
+                mortgage_data.update(reg_data)
+
+                # Ensure 'id' is explicitly set to mortgage's ID, not overridden
+                mortgage_data['id'] = mortgage.id
+                mortgage_data['last_registers_mortgage_id'] = most_recent_reg.mortgage_id
+
                 mortgage_info.append(mortgage_data)
+
 
         # Check for pending payments
         payments_pendings = db.query(RegsInDb).filter(RegsInDb.payment_status == "pending", RegsInDb.debtor_id == debtor_id).count()
@@ -281,14 +291,30 @@ async def get_all_mortgages(db: Session = Depends(get_db), token: str = Header(N
         if role == "admin":
             mortgages = db.query(MortgageInDB).all()
             mortgage_info = []
-            for mortgage in mortgages:
-                mortgage_info.append({
-                    "id"                : mortgage.id,
-                    "debtor_id"         : mortgage.debtor_id,
-                    "current_balance"   : mortgage.current_balance,
-                    "interest_rate"     : mortgage.interest_rate,
-                    "mortgage_status"   : mortgage.mortgage_status
-                })
+            for mortgage in mortgages:  
+                if mortgage.mortgage_status == 'loaned':    
+                    mortgage_info.append({
+                        "id"                : mortgage.id,
+                        "debtor_id"         : mortgage.debtor_id,
+                        "current_balance"   : mortgage.current_balance,
+                        "interest_rate"     : mortgage.interest_rate,
+                        "mortgage_status"   : mortgage.mortgage_status
+                    })
+            props = db.query(PropInDB).all()
+            mort_to_process = []
+            for prop in props:
+                if prop.prop_status == "selected":
+                    # Assuming prop.debtor_id links to the debtor/user of the property
+                    debtor = db.query(UserInDB).filter(UserInDB.id_number == prop.owner_id).first()
+                    debtor_username = debtor.username if debtor else "Unknown"
+                    mort_to_process.append({
+                        "id"            : prop.id,
+                        "matricula_id"  : prop.matricula_id,
+                        "valor"         : prop.loan_solicited,
+                        "deudor"        : debtor_username  
+                    })
+
+                    
 
             # Log successful retrieval of all mortgages
             log_entry = LogsInDb(
@@ -300,7 +326,7 @@ async def get_all_mortgages(db: Session = Depends(get_db), token: str = Header(N
             db.add(log_entry)
             db.commit()
 
-            return mortgage_info
+            return {"mortgage_info" : mortgage_info, "mort_to_process" : mort_to_process}
         else:
             # Log unauthorized access attempt
             log_entry = LogsInDb(
@@ -439,3 +465,47 @@ def get_mortgage_details_by_debtor(debtor_id: str, db: Session = Depends(get_db)
     return {"mortgage_info": mortgage_info, "payments_pendings": payments_pendings}
 
 
+
+@router.get("/process_mortgages/{property_id}")
+def process_mortgages(property_id: int, db: Session = Depends(get_db), token: str = Header(None)):
+
+    if not token:
+        raise HTTPException(status_code=401, detail="Token not provided")
+    
+    decoded_token = decode_jwt(token)
+    role = decoded_token.get("role")
+    if role != "admin":
+        raise HTTPException(status_code=403, detail="Access denied, admin role required")
+
+    # Query for the property that is in the "selected" status
+    property = db.query(PropInDB).filter(PropInDB.id == property_id, PropInDB.prop_status == "selected").first()
+    if not property:
+        raise HTTPException(status_code=404, detail="Selected property not found")
+
+    # Query for the latest loan progress related to the selected property with the specific status
+    loan_progress = db.query(LoanProgress).filter(
+        LoanProgress.property_id == property_id, 
+        LoanProgress.status == "Tramite de hipoteca solicitado"
+    ).order_by(LoanProgress.date.desc()).first()
+
+    if not loan_progress:
+        raise HTTPException(status_code=404, detail="Loan progress for the selected property not found")
+
+    # Query for debtor and lender information based on the found records
+    debtor = db.query(UserInDB).filter(UserInDB.id_number == property.owner_id).first()
+    lender = db.query(UserInDB).filter(UserInDB.id_number == loan_progress.user_id).first()
+    if not debtor or not lender:
+        raise HTTPException(status_code=404, detail="User information not found")
+
+    return {
+        "deudor": {
+            "id_number": debtor.id_number,
+            "username": debtor.username,
+            "email": debtor.email
+        },
+        "inversionista": {
+            "id_number": lender.id_number,
+            "username": lender.username,
+            "email": lender.email
+        }
+    }

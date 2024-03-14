@@ -1,12 +1,14 @@
-from fastapi import APIRouter, Depends, HTTPException, UploadFile, File, Form, Header
+from fastapi import APIRouter, Depends, HTTPException, UploadFile, File as FastAPIFile, Header, Form
 from datetime import date, datetime, timedelta
 from dateutil.relativedelta import relativedelta
 from sqlalchemy.orm import Session
 from db.db_connection import get_db
-from db.all_db import RegsInDb, UserInDB, MortgageInDB, PenaltyInDB, LogsInDb
+from db.all_db import RegsInDb, UserInDB, MortgageInDB, PenaltyInDB, LogsInDb, File
 from models.reg_models import RegCreate, SystemReg, RegsUpDate
 import os
 import jwt
+import shutil
+import json
 
 
 utc_now                 = datetime.utcnow()
@@ -29,6 +31,16 @@ def decode_jwt(token):
     except Exception as e:
         raise HTTPException(status_code=401, detail=str(e))
     
+def save_file_to_db(db: Session, entity_type: str, entity_id: int, file_type: str, file_location: str):
+    new_file = File(
+        entity_type     = entity_type, 
+        entity_id       = entity_id, 
+        file_type       = file_type, 
+        file_location   = file_location)
+    db.add(new_file) 
+    db.commit()
+    db.refresh(new_file)
+    return new_file
 
 router = APIRouter()
 
@@ -45,9 +57,9 @@ def reg_to_dict(reg):
             "min_payment"       : reg.min_payment,
             "limit_date"        : reg.limit_date,
             "to_main_balance"   : reg.to_main_balance,
-            "comprobante": reg.comprobante,
-            "payment_status": reg.payment_status,
-            "comment": reg.comment,
+            "comprobante"       : reg.comprobante,
+            "payment_status"    : reg.payment_status,
+            "comment"           : reg.comment,
         }
 translate_status = {
     "approved"  : "aprobado",
@@ -57,11 +69,17 @@ translate_status = {
 
 
 
-
-
 @router.post("/mortgage_payment/register/")  #LOGS
-async def register_mortgage_payment(reg_data: RegCreate, db: Session = Depends(get_db), token: str = Header(None)):
+async def register_mortgage_payment(
+    payment_receipt: UploadFile = FastAPIFile(...),
+    reg_data: str = Form(...),
+    db: Session = Depends(get_db), 
+    token: str = Header(None)):
 
+    print("Received reg_data:", reg_data)  # Print reg_data as received
+    reg_data_dict = json.loads(reg_data)
+    print("Parsed reg_data_dict:", reg_data_dict) 
+    
     if not token:
         # Log unauthorized access attempt
         log_entry = LogsInDb(
@@ -78,57 +96,76 @@ async def register_mortgage_payment(reg_data: RegCreate, db: Session = Depends(g
     user_id_from_token = decoded_token.get("id")
 
     # Fetch mortgage details
-    mortgage = db.query(MortgageInDB).filter(MortgageInDB.id == reg_data.mortgage_id).first()
-
+    mortgage_id = reg_data_dict['mortgage_id']
+    mortgage = db.query(MortgageInDB).filter(MortgageInDB.id == mortgage_id).first()
     if not mortgage:
         raise HTTPException(status_code=404, detail="Mortgage not found")
 
+    upload_folder = './uploads'
+    os.makedirs(upload_folder, exist_ok=True)
+    
+    payment_receipt_filename = f"{mortgage.id}_receipt_{payment_receipt.filename}"
+    payment_receipt_location = f"{upload_folder}/{payment_receipt_filename}"
+    with open(payment_receipt_location, "wb") as buffer:
+        shutil.copyfileobj(payment_receipt.file, buffer)
+    
+    save_file_to_db(db, "mortgage_payment", mortgage.id, "payment_receipt", payment_receipt_location)
+
+    log_entry = LogsInDb(
+        action      = "Payment Receipt Uploaded",
+        timestamp   = datetime.now(),
+        message     = f"Payment receipt uploaded for mortgage ID: {mortgage.id}",
+        user_id     = user_id_from_token
+    )
+    db.add(log_entry)
+    db.commit()
+
     # Use the last system-generated register to get some default values
     last_system_register = (
-        db.query(RegsInDb)
-        .filter(RegsInDb.mortgage_id == reg_data.mortgage_id, RegsInDb.comment == "System")
-        .order_by(RegsInDb.date.desc())
-        .first()
+    db.query(RegsInDb)
+    .filter(RegsInDb.mortgage_id == reg_data_dict['mortgage_id'], RegsInDb.comment == "System")  # Use reg_data_dict
+    .order_by(RegsInDb.date.desc())
+    .first()
     )
-
+  
     # Set default values based on the last system-generated register
-    debtor_id   = last_system_register.debtor_id if last_system_register else reg_data.debtor_id
-    min_payment = last_system_register.min_payment if last_system_register else reg_data.min_payment
-    limit_date  = last_system_register.limit_date if last_system_register else reg_data.limit_date
+    debtor_id   = last_system_register.debtor_id if last_system_register else reg_data_dict['debtor_id']
+    min_payment = last_system_register.min_payment if last_system_register else reg_data_dict['min_payment']
+    limit_date  = last_system_register.limit_date if last_system_register else reg_data_dict['limit_date']
 
     # Create a new mortgage payment register
     new_register = RegsInDb(
-        mortgage_id     = reg_data.mortgage_id,
+        mortgage_id     = reg_data_dict['mortgage_id'],
         lender_id       = mortgage.lender_id,
         debtor_id       = debtor_id,
-        date            = reg_data.date,
+        date            = reg_data_dict['payment_date'],  # Make sure the key matches what you send from the frontend
         concept         = "Pago reportado por usuario",
-        amount          = reg_data.amount,
+        amount          = reg_data_dict['paid'],  # Make sure the key matches what you send from the frontend
         penalty         = 0,
         min_payment     = min_payment,
         limit_date      = limit_date,
         to_main_balance = 0,
-        comprobante     = reg_data.comprobante,
+        comprobante     = payment_receipt_location,  # Already correctly set above
         payment_status  = "pending",
         comment         = "debtor"
     )
 
     # Log successful mortgage payment registration
     log_entry = LogsInDb(
-        action      = "Mortgage Payment Registered",
-        timestamp   = local_timestamp_str,
-        message     = f"Mortgage payment registered for mortgage ID: {reg_data.mortgage_id}",
-        user_id     = user_id_from_token
+    action      = "Mortgage Payment Registered",
+    timestamp   = datetime.now(),
+    message     = f"Mortgage payment registered for mortgage ID: {reg_data_dict['mortgage_id']}",  # Corrected access
+    user_id     = user_id_from_token
     )
     db.add(log_entry)
+    db.commit()
 
     # Commit the changes to the database
     db.add(new_register)
     db.commit()
 
-    return {"message": "Mortgage payment registered successfully"}
+    return {"message": "Pago reportado con exito"}
 
-    
 
 
 @router.get("/pending_regs/{status}")  #LOGS TOKEN
@@ -169,20 +206,20 @@ def pending_regs(status: str, db: Session = Depends(get_db), token: str = Header
 
     regs = db.query(RegsInDb).filter(RegsInDb.payment_status == status).all()
     records = [{
-        "id": reg.id,
-        "mortgage_id": reg.mortgage_id,
-        "lender_id": reg.lender_id,
-        "debtor_id": reg.debtor_id,
-        "date": reg.date,
-        "concept": reg.concept,
-        "amount": reg.amount,
-        "penalty": reg.penalty,
-        "min_payment": reg.min_payment,
-        "limit_date": reg.limit_date,
-        "to_main_balance": reg.to_main_balance,
-        "comprobante": reg.comprobante,
-        "payment_status": reg.payment_status,
-        "comment": reg.comment,
+        "id"                : reg.id,
+        "mortgage_id"       : reg.mortgage_id,
+        "lender_id"         : reg.lender_id,
+        "debtor_id"         : reg.debtor_id,
+        "date"              : reg.date,
+        "concept"           : reg.concept,
+        "amount"            : reg.amount,
+        "penalty"           : reg.penalty,
+        "min_payment"       : reg.min_payment,
+        "limit_date"        : reg.limit_date,
+        "to_main_balance"   : reg.to_main_balance,
+        "comprobante"       : reg.comprobante,
+        "payment_status"    : reg.payment_status,
+        "comment"           : reg.comment,
             } for reg in regs]
 
 
@@ -190,10 +227,10 @@ def pending_regs(status: str, db: Session = Depends(get_db), token: str = Header
         return {"records": []}  # Return an empty list if there are no records
 
     log_entry = LogsInDb(
-        action="Admin Accessed Pending Records",
-        timestamp=local_timestamp_str,
-        message=f"Records pending retrieved",
-        user_id=user_id_from_token
+        action      = "Admin Accessed Pending Records",
+        timestamp   = local_timestamp_str,
+        message     = f"Records pending retrieved",
+        user_id     = user_id_from_token
     )
     db.add(log_entry)
     db.commit()
@@ -206,10 +243,10 @@ async def get_regs(debtor_id: str, db: Session = Depends(get_db), token: str = H
     if not token:
         # Log unauthorized access attempt
         log_entry = LogsInDb(
-            action="User Alert",
-            timestamp=local_timestamp_str,
-            message="Unauthorized access attempt to retrieve user records (Token not provided)",
-            user_id=None
+            action      = "User Alert",
+            timestamp   = local_timestamp_str,
+            message     = "Unauthorized access attempt to retrieve user records (Token not provided)",
+            user_id     = None
         )
         db.add(log_entry)
         db.commit()
@@ -231,8 +268,8 @@ async def get_regs(debtor_id: str, db: Session = Depends(get_db), token: str = H
         db.commit()
         raise HTTPException(status_code=403, detail="No tienes permiso para ver estos registros")
 
-    all_regs = db.query(RegsInDb).filter(RegsInDb.debtor_id == debtor_id).order_by(RegsInDb.date).all()
-    user = db.query(UserInDB).filter(UserInDB.id_number == debtor_id).first()
+    all_regs    = db.query(RegsInDb).filter(RegsInDb.debtor_id == debtor_id).order_by(RegsInDb.date).all()
+    user        = db.query(UserInDB).filter(UserInDB.id_number == debtor_id).first()
     if not user:
         return {"message": "Usuario no existe en la base de datos, revisa los valores ingresados"}
     regs = []
@@ -374,7 +411,7 @@ async def generate_system_payment(reg_data: SystemReg, db: Session = Depends(get
                 db.query(PenaltyInDB)
                 .filter(
                     PenaltyInDB.start_date <= reg_data.date.replace(day=1),
-                    PenaltyInDB.end_date >= reg_data.date.replace(day=31)
+                    PenaltyInDB.end_date >= reg_data.date.replace(day=30)
                 )
                 .first()
             )

@@ -220,41 +220,51 @@ async def update_loan_application(matricula_id: str, update_data: dict, db: Sess
     if role_from_token is None or role_from_token not in ["admin"]:
         raise HTTPException(status_code=403, detail="Not authorized to update loan application")
 
-    property_detail = db.query(PropInDB).filter(PropInDB.matricula_id == matricula_id).first()
+    normalized_input_matricula_id = ''.join(e for e in matricula_id if e.isalnum() or e in ['-']).lower()
+
+    # Retrieve all properties then filter in Python (Consider optimizing based on your actual dataset size and indexing)
+    potential_properties = db.query(PropInDB).all()
+    property_detail = next((prop for prop in potential_properties if ''.join(e for e in prop.matricula_id if e.isalnum() or e in ['-']).lower() == normalized_input_matricula_id), None)
     if not property_detail:
         raise HTTPException(status_code=404, detail="Property not found")
 
     # Ensure the status and notes are properly extracted from the update_data
-    status          = update_data.get("status", "")
-    user_id         = user_id_from_token
-    notes           = update_data.get("notes", "") 
-    current_date    = local_timestamp_str
+    status = update_data.get("status", "")
+    notes = update_data.get("notes", "") 
 
-    # Update property details as needed
-    prop_status     = update_data.get("prop_status")
-    rate_proposed   = update_data.get("rate_proposed")
-    evaluation      = update_data.get("evaluation")
-    final_status    = update_data.get("final_status")
+    # Updating property comments based on status
+    if status:
+        if status == "analisis deudor en proceso":
+            property_detail.comments = "analysis"
+        elif status == "analisis de garantia":
+            property_detail.comments = "concept"
+        elif status == "Tasa de Interes fijada":
+            property_detail.comments = "result"
 
-    if prop_status:
-        property_detail.prop_status = prop_status
-
+    rate_proposed = update_data.get("rate_proposed")
     if rate_proposed is not None:
         property_detail.rate_proposed = rate_proposed
 
+    evaluation = update_data.get("evaluation")
     if evaluation:
         property_detail.evaluation = evaluation
 
+    final_status = update_data.get("final_status")
     if final_status:
-        property_detail.comments = final_status
+        if final_status == "approved":
+            property_detail.study = "approved"
+        elif final_status == "rejected":
+            property_detail.study = "rejected"
+
 
     db.add(property_detail)
 
     # Create a new LoanProgress entry with the current date and provided notes
     new_loan_progress = LoanProgress(
         property_id = property_detail.id, 
-        date        = current_date, 
+        date        = local_timestamp_str, 
         status      = status, 
+        user_id     = property_detail.owner_id,
         notes       = notes,  
         updated_by  = user_id_from_token
     )

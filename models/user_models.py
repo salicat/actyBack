@@ -7,10 +7,10 @@ class UserIn(BaseModel):
     username        : str
     email           : str
     hashed_password : Optional [str]= None
-    phone           : str
-    legal_address   : str
-    user_city       : str
-    user_department : str
+    phone           : Optional [str]= None
+    legal_address   : Optional [str]= None
+    user_city       : Optional [str]= None
+    user_department : Optional [str]= None
     id_number       : str
     agent           : Optional [str]= None
     added_by        : Optional [int]= None
