@@ -211,7 +211,7 @@ def retrieve_property(id_number: str, db: Session = Depends(get_db)):
     return {"properties" : user_properties, "mortgages" : user_mortgages}
 
 
-@router.get("/properties/{status}")   #LOGS #TOKEN-ROLE # posted, selected, funded, mortgage
+@router.get("/properties/{status}")  # LOGS #TOKEN-ROLE # posted, selected, funded, mortgage
 def get_properties_by_status(status: str, db: Session = Depends(get_db), token: str = Header(None)):
     if not token:
         log_entry = LogsInDb(
@@ -222,7 +222,6 @@ def get_properties_by_status(status: str, db: Session = Depends(get_db), token: 
         )
         db.add(log_entry)
         db.commit()
-
         raise HTTPException(status_code=401, detail="Token not provided")
 
     decoded_token = decode_jwt(token)
@@ -237,7 +236,6 @@ def get_properties_by_status(status: str, db: Session = Depends(get_db), token: 
         )
         db.add(log_entry)
         db.commit()
-
         raise HTTPException(status_code=403, detail="Token is missing or invalid")
 
     if role_from_token not in ["admin", "lender"]:
@@ -249,50 +247,29 @@ def get_properties_by_status(status: str, db: Session = Depends(get_db), token: 
         )
         db.add(log_entry)
         db.commit()
-
         raise HTTPException(status_code=403, detail="No tienes permiso para ver propiedades por estado")
 
-    log_entry = LogsInDb(
-        action="Properties by Status",
-        timestamp=local_timestamp_str,
-        message=f"Admin accessed properties with status: {status}",
-        user_id=decoded_token.get("id")
-    )
-    db.add(log_entry)
-    db.commit()
-
     properties_data = []
+    processed_property_ids = set()  # To track properties already added
 
-    properties = (
-        db.query(PropInDB)
-        .options(joinedload(PropInDB.loan_progress))
-        .all()
-    )
+    # Handling different statuses without making new imports
+    if status in ['analysis', 'available']:
+        query_status = 'study' if status == 'analysis' else 'approved'
+        properties = db.query(PropInDB).filter(PropInDB.study == query_status).all()
+    elif status in ['selected', 'loaned']:
+        property_ids = {mort.matricula_id for mort in db.query(MortgageInDB).filter(MortgageInDB.mortgage_stage == status).all()}
+        properties = db.query(PropInDB).filter(PropInDB.matricula_id.in_(property_ids)).all()
+    else:
+        raise HTTPException(status_code=400, detail="Invalid status provided")
 
     for property in properties:
-        property_photo = (
-            db.query(File)
-            .filter_by(entity_type='property', entity_id=property.id, file_type='property_photo')
-            .first()
-        )
+        if property.matricula_id in processed_property_ids:
+            continue  # Skip this property as it has already been processed
 
-        owner_details = (
-            db.query(UserInDB.username, UserInDB.score)
-            .filter(UserInDB.id_number == property.owner_id)
-            .first()
-        )
+        property_photo = db.query(File).filter_by(entity_type='property', entity_id=property.id, file_type='property_photo').first()
+        owner_details = db.query(UserInDB.username, UserInDB.score).filter(UserInDB.id_number == property.owner_id).first()
 
-        # Determine the category of the property based on study and mortgage_stage
-        if property.study != 'approved':
-            category = "propiedades en estudio"
-        elif property.study == 'approved':
-            category = "propiedades publicadas"
-        for loan_progress in property.loan_progress:
-            if loan_progress.mortgage_stage == 'selected':
-                category = "propiedades seleccionadas"
-                break  # If one loan_progress indicates selected, categorize and stop checking
-
-        properties_data.append({
+        property_data = {
             "id": property.id,
             "matricula_id": property.matricula_id,
             "address": property.address,
@@ -311,23 +288,17 @@ def get_properties_by_status(status: str, db: Session = Depends(get_db), token: 
             "comments": property.comments,
             "property_photo": property_photo.file_location if property_photo else None,
             "owner_username": owner_details.username if owner_details else None,
-            "owner_score": owner_details.score if owner_details else None,
-            "category": category  # Add the determined category
-        })
+            "owner_score": owner_details.score if owner_details else None
+        }
 
-    log_entry = LogsInDb(
-        action="Properties by Status Retrieved",
-        timestamp=local_timestamp_str,
-        message=f"User accessed properties with status: {status}",
-        user_id=decoded_token.get("id")
-    )
-    db.add(log_entry)
-    db.commit()
+        properties_data.append(property_data)
+        processed_property_ids.add(property.matricula_id)  # Mark this property as processed
 
     if not properties_data:
-        raise HTTPException(status_code=404, detail="No properties found with the given status")
+        raise HTTPException(status_code=404, detail=f"No properties found with the status '{status}'")
 
     return properties_data
+
 
 
 
@@ -360,32 +331,37 @@ def get_properties_by_status(db: Session = Depends(get_db), token: str = Header(
 
     if role_from_token != "admin":
         log_entry = LogsInDb(
-            action="User Alert",
-            timestamp=local_timestamp_str,
-            message="Unauthorized attempt to access properties by status (Insufficient permissions)",
-            user_id=decoded_token.get("id")
+            action      = "User Alert",
+            timestamp   = local_timestamp_str,
+            message     = "Unauthorized attempt to access properties by status (Insufficient permissions)",
+            user_id     = decoded_token.get("id")
         )
         db.add(log_entry)
         db.commit()
         raise HTTPException(status_code=403, detail="No tienes permiso para ver propiedades por estado")
 
     log_entry = LogsInDb(
-        action="Properties accessed by admin",
-        timestamp=local_timestamp_str,
-        message="Admin accessed properties ALL",
-        user_id=decoded_token.get("id")
+        action      = "Properties accessed by admin",
+        timestamp   = local_timestamp_str,
+        message     = "Admin accessed properties ALL",
+        user_id     = decoded_token.get("id")
     )
     db.add(log_entry)
     db.commit()
 
     properties_data = {
-        "propiedades en estudio": [],
-        "propiedades publicadas": [],
-        "propiedades seleccionadas": []
+        "estudio"       : [],
+        "publicadas"    : [],
+        "seleccionadas" : []
     }
 
-    properties = db.query(PropInDB).all()
+    selected_property_ids = set()
+    mortgages = db.query(MortgageInDB).all()
+    for mort in mortgages:
+        if mort.mortgage_stage == "selected":
+            selected_property_ids.add(mort.matricula_id)
 
+    properties = db.query(PropInDB).all()
     for property in properties:
         property_photo = db.query(File).filter_by(entity_type='property', entity_id=property.id, file_type='property_photo').first()
         owner_details = db.query(UserInDB.username, UserInDB.score).filter(UserInDB.id_number == property.owner_id).first()
@@ -412,23 +388,21 @@ def get_properties_by_status(db: Session = Depends(get_db), token: str = Header(
             "owner_score": owner_details.score if owner_details else None
         }
 
+        if property.matricula_id in selected_property_ids:
+            property_dict["stage"] = "selected"
+            properties_data["seleccionadas"].append(property_dict)
+            continue  # Skip adding this property to other categories
+
         # Categorizing based on study status and mortgage stage
         if property.study != "approved":
-            properties_data["propiedades en estudio"].append(property_dict)
+            properties_data["estudio"].append(property_dict)
         elif property.study == "approved":
-            properties_data["propiedades publicadas"].append(property_dict)
-        
-        # You will need to adjust this part to correctly query your MortgageInDB based on your database schema
-        # For example, if you have a foreign key relationship, you might query like so:
-        mortgage_status = db.query(MortgageInDB.mortgage_stage).filter(MortgageInDB.matricula_id == property.matricula_id).first()
-        if mortgage_status and mortgage_status.mortgage_stage == "selected":
-            properties_data["propiedades seleccionadas"].append(property_dict)
+            properties_data["publicadas"].append(property_dict)
 
     if not any(properties_data.values()):
         raise HTTPException(status_code=404, detail="No properties found")
 
     return properties_data
-
 
 
 #LOGS #TOKEN-ROLE 
@@ -598,27 +572,27 @@ def select_property(property_id: int, db: Session = Depends(get_db), token: str 
     if not token:
         # Log unauthorized access attempt
         log_entry = LogsInDb(
-            action="User Alert",
-            timestamp=local_timestamp_str,
-            message="Unauthorized attempt to select property (Token not provided)",
-            user_id=None
+            action      = "User Alert",
+            timestamp   = local_timestamp_str,
+            message     = "Unauthorized attempt to select property (Token not provided)",
+            user_id     = None
         )
         db.add(log_entry)
         db.commit()
         raise HTTPException(status_code=401, detail="Token not provided")
 
-    decoded_token = decode_jwt(token)
-    user_pk = decoded_token.get("pk")
-    user_id_from_token = decoded_token.get("id")
+    decoded_token       = decode_jwt(token)
+    user_pk             = decoded_token.get("pk")
+    user_id_from_token  = decoded_token.get("id")
 
     role_from_token = decoded_token.get("role")
 
     if role_from_token is None or role_from_token != "lender":
         # Log unauthorized access attempt
         log_entry = LogsInDb(
-            action="User Alert",
-            timestamp=local_timestamp_str,
-            message="Unauthorized attempt to select property (Invalid role or token)",
+            action      = "User Alert",
+            timestamp   = local_timestamp_str,
+            message     = "Unauthorized attempt to select property (Invalid role or token)",
             user_id=user_id_from_token
         )
         db.add(log_entry)
@@ -632,22 +606,22 @@ def select_property(property_id: int, db: Session = Depends(get_db), token: str 
     property = db.query(PropInDB).filter(PropInDB.id == property_id).first()
     if not property:
         raise HTTPException(status_code=404, detail="Property not found")
-
-    property.prop_status = "selected"
     
-    #check for the provisional mortgage created when loan was approved
-    mortgage = db.query(MortgageInDB).filter(MortgageInDB.matricula_id ==  property.matricula_id).first()
-    mortgage.mortgage_stage = "selected"    
+    # Check for the provisional mortgage created when loan was approved
+    mortgage = db.query(MortgageInDB).filter(MortgageInDB.matricula_id == property.matricula_id).first()
+    if not mortgage:
+        raise HTTPException(status_code=404, detail="Provisional mortgage not found")
     
-    loan_progress = LoanProgress(   
-        date        = local_timestamp_str,
-        property_id = property_id,
-        status      = "Tramite de hipoteca solicitado",
-        user_id     = lender.id_number,  
-        notes       = f"Inversionista {lender.username}",
-        updated_by  = user_id_from_token
-    )
-    db.add(loan_progress)
+    # Update the mortgage provisional register
+    mortgage.lender_id          = lender.id_number
+    mortgage.mortgage_stage     = "selected"
+    mortgage.initial_balance    = 0
+    mortgage.interest_rate      = property.rate_proposed
+    mortgage.mortgage_status    = "solicited"
+    mortgage.comments           = "...in process"
+    
+    db.add(mortgage)
+    db.commit()
 
     # Log the property selection
     log_entry = LogsInDb(
@@ -658,7 +632,5 @@ def select_property(property_id: int, db: Session = Depends(get_db), token: str 
     )
     db.add(log_entry)
     db.commit()
-
-    db.refresh(property)
 
     return {"message": f"Property with ID {property_id} successfully selected by {lender.username}"}

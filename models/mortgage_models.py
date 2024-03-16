@@ -1,9 +1,9 @@
-from pydantic import BaseModel
-from datetime import date
-from typing import Optional
+from pydantic   import BaseModel
+from datetime   import date
+from typing     import Optional
 
 class MortgageCreate(BaseModel):
-    lender_id           : Optional[str] = None
+    lender_id           : Optional[str] = None 
     debtor_id           : str
     agent_id            : Optional[str] = None
     matricula_id        : str
@@ -15,7 +15,6 @@ class MortgageCreate(BaseModel):
     mortgage_state      : Optional[str] = None
     monthly_payment     : Optional[int] = None
     mortgage_status     : Optional[str] = None
-    
     
 
 class MortgageUpdate(BaseModel):

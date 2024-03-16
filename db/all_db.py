@@ -20,7 +20,7 @@ class UserInDB(Base):
     account_type    = Column(String)
     account_number  = Column(String)
     bank_name       = Column(String)
-    agent           = Column(Boolean, default=False)
+    agent           = Column(Boolean, default=False)   #THIS IS TRUE FOR INVESTMENT AGENTS ONLY
     added_by        = Column(Integer, ForeignKey("users.id"))
 
     owned_properties    = relationship("PropInDB", back_populates="owner")
@@ -47,9 +47,9 @@ class RegsInDb(Base):
     lender_id       = Column(String, ForeignKey("users.id_number"))
     debtor_id       = Column(String, ForeignKey("users.id_number"))
     date            = Column(Date)
-    paid            = Column(Integer) #NEW what user paid debits 
+    paid            = Column(Integer) #NEW what user paid "debits" 
     concept         = Column(String)
-    amount          = Column(Integer) #what system charges credits
+    amount          = Column(Integer) #what system charges "credits"
     penalty         = Column(Integer)
     min_payment     = Column(Integer) 
     limit_date      = Column(Date)
@@ -81,7 +81,7 @@ class PropInDB(Base):
     study           = Column(String)    # NEW  "study" => "approved" 
     prop_status     = Column(String)    # available when study is approved or loaned ONLY
     comments        = Column(String)    # Loan tracking [received, analisis, concept, result, available]
-
+    
     owner           = relationship("UserInDB", back_populates="owned_properties", foreign_keys=[owner_id])
     loan_progress   = relationship("LoanProgress", back_populates="property")
 
@@ -99,8 +99,8 @@ class MortgageInDB(Base):
     current_balance = Column(Integer)
     last_update     = Column(Date)
     monthly_payment = Column(Integer)
-    mortgage_stage  = Column(String) #NEW [solicited, iniciated, filled, active]    
-    mortgage_status = Column(String) # active, debt_pending, lawyer
+    mortgage_stage  = Column(String) #NEW [selected, notary, process, active]    
+    mortgage_status = Column(String) # solicited => active, debt_pending, lawyer
     comments        = Column(String) # "Mortgage process submited by user='...' "] when selected status = in process
 
     lender      = relationship("UserInDB", foreign_keys=[lender_id], back_populates="lent_mortgages")

@@ -194,6 +194,15 @@ async def get_loan_application_details(matricula_id: str, db: Session = Depends(
                     for doc in documents
                 ]
     })
+    user_credentials = []
+    owner = db.query(UserInDB).filter(UserInDB.id_number == property_detail.owner_id).first()
+
+    if owner:
+        user_credentials.append({
+            "user"  : owner.email,
+            "pass"  : owner.id_number
+        })
+
 
     # Log the action after successful retrieval
     log_entry = LogsInDb(action="Loan Application Detail Retrieved", timestamp=datetime.now(), message=f"Retrieved loan application details for matricula_id: {matricula_id}", user_id=user_id_from_token)
@@ -202,40 +211,42 @@ async def get_loan_application_details(matricula_id: str, db: Session = Depends(
 
     return {
         "credit_detail": credit_detail,
-        "property_detail": property_info
+        "property_detail": property_info,
+        "owner_info" : user_credentials
     }
 
 
 
 @router.post("/loan_progress/update/{matricula_id}")
 async def update_loan_application(matricula_id: str, update_data: dict, db: Session = Depends(get_db), token: str = Header(None)):
-    
     if not token:
         raise HTTPException(status_code=401, detail="Token not provided")
 
-    decoded_token       = decode_jwt(token)
-    role_from_token     = decoded_token.get("role")
-    user_id_from_token  = decoded_token.get("id")
+    decoded_token = decode_jwt(token)
+    role_from_token = decoded_token.get("role")
+    user_id_from_token = decoded_token.get("id")
 
     if role_from_token is None or role_from_token not in ["admin"]:
         raise HTTPException(status_code=403, detail="Not authorized to update loan application")
 
     normalized_input_matricula_id = ''.join(e for e in matricula_id if e.isalnum() or e in ['-']).lower()
-
-    # Retrieve all properties then filter in Python (Consider optimizing based on your actual dataset size and indexing)
     potential_properties = db.query(PropInDB).all()
     property_detail = next((prop for prop in potential_properties if ''.join(e for e in prop.matricula_id if e.isalnum() or e in ['-']).lower() == normalized_input_matricula_id), None)
     if not property_detail:
         raise HTTPException(status_code=404, detail="Property not found")
 
-    # Ensure the status and notes are properly extracted from the update_data
     status = update_data.get("status", "")
-    notes = update_data.get("notes", "") 
-
-    # Updating property comments based on status
+    notes = update_data.get("notes", "")
+    score = update_data.get("score", None)
+    
     if status:
         if status == "analisis deudor en proceso":
             property_detail.comments = "analysis"
+            if score is not None:
+                # Ensure we're looking up the user based on id_number as mentioned
+                user = db.query(UserInDB).filter(UserInDB.id_number == property_detail.owner_id).first()
+                if user:
+                    user.score = score  # Update the user's score
         elif status == "analisis de garantia":
             property_detail.comments = "concept"
         elif status == "Tasa de Interes fijada":
@@ -256,23 +267,26 @@ async def update_loan_application(matricula_id: str, update_data: dict, db: Sess
         elif final_status == "rejected":
             property_detail.study = "rejected"
 
-
     db.add(property_detail)
 
-    # Create a new LoanProgress entry with the current date and provided notes
     new_loan_progress = LoanProgress(
-        property_id = property_detail.id, 
-        date        = local_timestamp_str, 
-        status      = status, 
-        user_id     = property_detail.owner_id,
-        notes       = notes,  
-        updated_by  = user_id_from_token
+        property_id=property_detail.id, 
+        date=datetime.now(), 
+        status=status, 
+        user_id=property_detail.owner_id,
+        notes=notes,  
+        updated_by=user_id_from_token
     )
     db.add(new_loan_progress)
 
-    log_entry = LogsInDb(action="Loan Application Updated", timestamp=datetime.now(), message=f"Updated loan application for matricula_id: {matricula_id} with status: {status}", user_id=user_id_from_token)
+    log_entry = LogsInDb(
+        action="Loan Application Updated", 
+        timestamp=datetime.now(), 
+        message=f"Updated loan application for matricula_id: {matricula_id} with status: {status}", 
+        user_id=user_id_from_token
+    )
     db.add(log_entry)
 
-    db.commit()
+    db.commit()  # This should commit all changes including the user score update.
 
     return {"message": "Loan application updated successfully"}

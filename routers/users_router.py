@@ -272,7 +272,6 @@ async def get_mi_perfil(user_info_ask: str, db: Session = Depends(get_db)):
     if not user_info:
         raise HTTPException(status_code=404, detail="El usuario no existe")
 
-    
     log_entry = LogsInDb(
         action="Profile Accessed",
         timestamp=datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
