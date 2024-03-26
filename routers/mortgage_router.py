@@ -3,7 +3,7 @@ from sqlalchemy.orm import Session
 from sqlalchemy import desc
 from db.db_connection import get_db
 from db.all_db import MortgageInDB, UserInDB, PropInDB, RegsInDb, File, LogsInDb, LoanProgress
-from models.mortgage_models import MortgageCreate
+from models.mortgage_models import MortgageCreate, MortStage
 from datetime import timedelta, date, datetime
 import jwt
 
@@ -76,50 +76,10 @@ def create_mortgage(mortgage_data   : MortgageCreate,
 
     lender = db.query(UserInDB).filter(UserInDB.id_number == mortgage_data.lender_id).first()
     debtor = db.query(UserInDB).filter(UserInDB.id_number == mortgage_data.debtor_id).first()
-
-    if not lender or not debtor: # Log invalid lender or debtor access attempt
-        log_entry = LogsInDb(
-            action      = "User Alert",
-            timestamp   = local_timestamp_str,
-            message     = "Invalid lender or debtor ID in mortgage creation",
-            user_id     = None  # You can leave user_id as None for unauthorized access
-        )
-        db.add(log_entry)
-        db.commit()
-
-        raise HTTPException(status_code=400, detail="Invalid lender or debtor ID")
-
-    debtor_properties = db.query(PropInDB).filter(PropInDB.owner_id == debtor.id_number).all()
-
-    if not debtor_properties: # Log user with no registered properties access attempt
-        log_entry = LogsInDb(
-            action      = "User Alert",
-            timestamp   = local_timestamp_str,
-            message     = "El usuario no tiene inmuebles registrados",
-            user_id     = decoded_token.get("id") if debtor else None
-        )
-        db.add(log_entry)
-        db.commit()
-
-        raise HTTPException(status_code=400, detail="El usuario no tiene inmuebles registrados")
-
     property = db.query(PropInDB).filter(PropInDB.matricula_id == mortgage_data.matricula_id).first()
-
-    if not property or property.owner_id != debtor.id_number:
-        # Log unauthorized access attempt to create mortgage with a non-owned property
-        log_entry = LogsInDb(
-            action      = "User Alert",
-            timestamp   = local_timestamp_str,
-            message     = "El prospecto deudor no es propietario del inmueble en referencia",
-            user_id     = decoded_token.get("id")
-        )
-        db.add(log_entry)
-        db.commit()
-
-        raise HTTPException(status_code=400, detail="El prospecto deudor no es propietario del inmueble en referencia")
-
-    if property.prop_status != "process":
-        # Log unauthorized access attempt to create mortgage with an unavailable property
+    if not lender or not debtor or not property:
+        raise HTTPException(status_code=400, detail="Invalid lender, debtor, or property information")
+    if property.prop_status != "available":
         log_entry = LogsInDb(
             action      = "User Alert",
             timestamp   = local_timestamp_str,
@@ -129,58 +89,55 @@ def create_mortgage(mortgage_data   : MortgageCreate,
         db.add(log_entry)
         db.commit()
 
-        raise HTTPException(
-            status_code = 400, 
-            detail      = "Inmueble no disponible para hipoteca"
+        raise HTTPException(status_code=400, detail="Property not available for mortgage")
+    
+    # Check for existing provisional mortgage
+    existing_mortgage = db.query(MortgageInDB).filter(
+        MortgageInDB.matricula_id == mortgage_data.matricula_id,
+        MortgageInDB.mortgage_stage == "process").first()
+    
+    agent = db.query(UserInDB).filter(UserInDB.id == mortgage_data.agent_id).first()
+
+    if existing_mortgage:
+        # Update existing provisional mortgage
+        existing_mortgage.lender_id = lender.id_number
+        existing_mortgage.debtor_id = debtor.id_number
+        existing_mortgage.agent_id = agent.id_number if agent else None
+        existing_mortgage.start_date = mortgage_data.start_date
+        existing_mortgage.initial_balance = mortgage_data.initial_balance
+        existing_mortgage.interest_rate = mortgage_data.interest_rate
+        existing_mortgage.current_balance = mortgage_data.current_balance
+        existing_mortgage.monthly_payment = (mortgage_data.initial_balance * mortgage_data.interest_rate) / 100, 
+        existing_mortgage.mortgage_stage = "active"
+        existing_mortgage.mortgage_status = "active"  # Assuming the mortgage becomes active after update
+        existing_mortgage.last_update = local_timestamp_str
+        existing_mortgage.comments = 'Valor a desembolsar ',mortgage_data.current_balance - (mortgage_data.initial_balance * mortgage_data.interest_rate) / 100
+        db.commit()   
+        message = "Mortgage updated successfully, First reg created"
+        new_reg = RegsInDb(
+            mortgage_id     = existing_mortgage.id,
+            lender_id       = lender.id_number,
+            debtor_id       = debtor.id_number,
+            date            = mortgage_data.start_date,
+            concept         = "Primera cuota, debito automatico",
+            amount          = existing_mortgage.monthly_payment,
+            penalty         = 0,
+            min_payment     = existing_mortgage.monthly_payment,
+            limit_date      = mortgage_data.start_date + timedelta(days=30),  # Adjusted for clarity
+            to_main_balance = 0,
+            payment_status  = "approved",
+            comment         = "System"
         )
-
-    new_mortgage = MortgageInDB(
-        lender_id       = mortgage_data.lender_id,
-        debtor_id       = mortgage_data.debtor_id,
-        agent_id        = mortgage_data.agent_id,
-        matricula_id    = mortgage_data.matricula_id,
-        start_date      = mortgage_data.start_date,
-        initial_balance = mortgage_data.initial_balance,
-        interest_rate   = mortgage_data.interest_rate,
-        current_balance = mortgage_data.initial_balance,
-        last_update     = local_timestamp_str,
-        monthly_payment = mortgage_data.initial_balance * mortgage_data.interest_rate / 100,
-        mortgage_status = "active"  # default status to active when mortgage is created
-    )
-
-    # Log successful mortgage creation
-    log_entry = LogsInDb(
-        action      = "Mortgage Created",
-        timestamp   = local_timestamp_str,
-        message     = f"Mortgage created for lender {lender.username}, debtor {debtor.username}, property {property.matricula_id}",
-        user_id     = decoded_token.get("id")
-    )
-    db.add(log_entry)
-
-    db.add(new_mortgage)
-    db.commit()
-    db.refresh(new_mortgage)
-
-    new_reg = RegsInDb(
-        mortgage_id     = new_mortgage.id,
-        lender_id       = lender.id_number,
-        debtor_id       = debtor.id_number,
-        date            = mortgage_data.start_date,
-        concept         = "Primera cuota, debito automatico",
-        amount          = new_mortgage.monthly_payment,
-        penalty         = 0,
-        min_payment     = new_mortgage.monthly_payment,
-        limit_date      = (mortgage_data.start_date + timedelta(days=5)),
-        to_main_balance = 0,
-        payment_status  = "approved",
-        comment         = "System"
-    )
-
-    db.add(new_reg)
+        
+        db.add(new_reg)
+        
+    else:
+        message = "Previous stages were omited"
+ 
     property.prop_status = "loaned"
     db.commit()
-    return {"message": "Mortgage and initial payment registered successfully"}
 
+    return {"message": message}
     
 
 
@@ -292,7 +249,7 @@ async def get_all_mortgages(db: Session = Depends(get_db), token: str = Header(N
             mortgages = db.query(MortgageInDB).all()
             mortgage_info = []
             for mortgage in mortgages:  
-                if mortgage.mortgage_status == 'loaned':    
+                if mortgage.mortgage_status == 'active':    
                     mortgage_info.append({
                         "id"                : mortgage.id,
                         "debtor_id"         : mortgage.debtor_id,
@@ -303,12 +260,13 @@ async def get_all_mortgages(db: Session = Depends(get_db), token: str = Header(N
             props = db.query(MortgageInDB).all()
             mort_to_process = []
             for prop in props:
-                if prop.mortgage_stage != None:
+                if prop.mortgage_stage != 'active':
                     debtor = db.query(UserInDB).filter(UserInDB.id_number == prop.debtor_id).first()
                     debtor_username = debtor.username if debtor else "Unknown"
                     mort_to_process.append({
                         "property_pk"   : prop.id,
                         "matricula_id"  : prop.matricula_id,
+                        "etapa"         : prop.mortgage_stage,
                         "deudor"        : debtor_username  
                     })
 
@@ -417,7 +375,7 @@ def get_mortgage_details_by_debtor(debtor_id: str, db: Session = Depends(get_db)
         raise HTTPException(status_code=403, detail="No tienes permiso para ver estos detalles")
 
     debtor = db.query(UserInDB).filter(UserInDB.id_number == debtor_id).first()
-
+    
     if debtor is None:
         # Log user not found
         log_entry = LogsInDb(
@@ -442,17 +400,16 @@ def get_mortgage_details_by_debtor(debtor_id: str, db: Session = Depends(get_db)
     db.commit()
 
     mortgage_info = []
-    mortgages = db.query(MortgageInDB).filter(MortgageInDB.debtor_id == debtor_id).all()
-
+    mortgages = db.query(MortgageInDB).filter(MortgageInDB.debtor_id == debtor.id_number).all()
+    
     for mortgage in mortgages:
         most_recent_reg = db.query(RegsInDb).filter(RegsInDb.mortgage_id == mortgage.id).order_by(desc(RegsInDb.id)).first()
         if most_recent_reg:
             mortgage_data = {**mortgage.__dict__, "comprobante": None, "concept": None, "limit_date": None, "penalty": None, "payment_status": None, "amount": None, "to_main_balance": None, "date": None, "lender_id": None, "min_payment": None, "id": None, "comment": None}
             mortgage_data.update({**most_recent_reg.__dict__, "last_registers_mortgage_id": most_recent_reg.mortgage_id})
             mortgage_info.append(mortgage_data)
-
     payments_pendings = 0
-
+    
     regs = db.query(RegsInDb).filter(RegsInDb.payment_status == "pending", RegsInDb.debtor_id == debtor_id).all()
 
     if regs:
@@ -522,6 +479,40 @@ async def gestion_hipotecas(property_id: int, db: Session = Depends(get_db), tok
     if not property:
         raise HTTPException(status_code=404, detail="Property not found")
 
+    def property_info_with_documents(property):
+        prop_files = db.query(File).filter(File.entity_id == property.id).all()
+        documents_status = {
+            "property_photo": None,
+            "tax_document": None,
+            "certi_libertad": None,
+            "paz_y_salvo": None,
+        }
+        for file in prop_files:
+            if file.file_type in documents_status:
+                documents_status[file.file_type] = {"uploaded": True, "path": file.file_location}
+        
+        return {
+            "matricula_id": property.matricula_id,
+            "address": property.address,
+            "neighbourhood": property.neighbourhood,
+            "city": property.city,
+            "department": property.department,
+            "strate": property.strate,
+            "area": property.area,
+            "type": property.type,
+            "tax_valuation": property.tax_valuation,
+            "loan_solicited": property.loan_solicited,
+            "rate_proposed": property.rate_proposed,
+            "evaluation": property.evaluation,
+            "prop_status": property.prop_status,
+            "documents": [
+                {"name": "Foto del inmueble", "key": "property_photo", "uploaded": documents_status["property_photo"] is not None, "path": documents_status["property_photo"]["path"] if documents_status["property_photo"] else None},
+                {"name": "Documento de impuestos", "key": "tax_document", "uploaded": documents_status["tax_document"] is not None, "path": documents_status["tax_document"]["path"] if documents_status["tax_document"] else None},
+                {"name": "Certificado de libertad", "key": "certi_libertad", "uploaded": documents_status["certi_libertad"] is not None, "path": documents_status["certi_libertad"]["path"] if documents_status["certi_libertad"] else None},
+                {"name": "Paz y salvo", "key": "paz_y_salvo", "uploaded": documents_status["paz_y_salvo"] is not None, "path": documents_status["paz_y_salvo"]["path"] if documents_status["paz_y_salvo"] else None},
+            ]
+        }
+
     def user_info_with_documents(user):
         user_files = db.query(File).filter(File.entity_id == user.id).all()
         documents_status = {
@@ -564,6 +555,7 @@ async def gestion_hipotecas(property_id: int, db: Session = Depends(get_db), tok
 
     debtor_info = user_info_with_documents(debtor)
     lender_info = user_info_with_documents(lender)
+    property    = property_info_with_documents(property)
 
     return {
         "deudor"        : debtor_info,
@@ -571,3 +563,28 @@ async def gestion_hipotecas(property_id: int, db: Session = Depends(get_db), tok
         "inmueble"      : property,
         "hipoteca"      : mortgage
     }
+
+@router.put("/mortgage/update/{property_id}")
+async def update_mortgage(
+    property_id: int, 
+    update_info: MortStage,  # FastAPI will infer this is from the body
+    db: Session = Depends(get_db), 
+    token: str = Header(None)):
+
+    decoded_token = decode_jwt(token)
+    role_from_token = decoded_token.get("role")
+        
+    if role_from_token != "admin":
+        raise HTTPException(status_code=403, detail="Not authorized")
+
+    mortgage = db.query(MortgageInDB).filter(MortgageInDB.id == property_id).first()
+    if not mortgage:
+        raise HTTPException(status_code=404, detail="Mortgage not found")
+
+    mortgage.mortgage_stage = update_info.mortgage_stage
+    mortgage.comments = update_info.comment  # Ensure this matches the Pydantic model field name
+    mortgage.last_update = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+
+    db.commit()
+
+    return {"message": "Mortgage updated successfully"}
