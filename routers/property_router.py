@@ -49,7 +49,8 @@ def save_file_to_db(db: Session, entity_type: str, entity_id: int, file_type: st
 @router.post("/property/create/", response_model=PropCreate)
 async def create_property(
     tax_document    : UploadFile    = FastAPIFile(...), 
-    property_photo  : UploadFile    = FastAPIFile(...), 
+    property_photo  : UploadFile    = FastAPIFile(...),
+    property_ctl     : UploadFile    = FastAPIFile(...), 
     property_data   : str           = Form(...),
     db              : Session       = Depends(get_db), 
     token           : str           = Header(None)
@@ -138,6 +139,13 @@ async def create_property(
         shutil.copyfileobj(property_photo.file, buffer)
     save_file_to_db(db, "property", new_property.id, "property_photo", property_photo_location)
 
+    # Property CTL
+    property_ctl_filename = f"{new_property.id}_ctl_{property_ctl.filename}"
+    property_ctl_location = f"{upload_folder}/{property_ctl_filename}"
+    with open(property_ctl_location, "wb") as buffer:
+        shutil.copyfileobj(property_ctl.file, buffer)
+    save_file_to_db(db, "property", new_property.id, "property_ctl", property_ctl_location)
+    
     log_entry = LogsInDb(
         action      = "Property Created", 
         timestamp   = datetime.now(), 
