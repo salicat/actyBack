@@ -157,7 +157,7 @@ async def get_loan_application_details(matricula_id: str, db: Session = Depends(
         credit_detail.append({
             "date": entry.date,
             "status": entry.status,
-            "notes": entry.notes,
+            "notes": entry.notes, 
             "updated_by": entry.updated_by
         })
         

@@ -50,7 +50,7 @@ def save_file_to_db(db: Session, entity_type: str, entity_id: int, file_type: st
 async def create_property(
     tax_document    : UploadFile    = FastAPIFile(...), 
     property_photo  : UploadFile    = FastAPIFile(...),
-    property_ctl     : UploadFile    = FastAPIFile(...), 
+    property_ctl    : UploadFile    = FastAPIFile(...), 
     property_data   : str           = Form(...),
     db              : Session       = Depends(get_db), 
     token           : str           = Header(None)
@@ -122,8 +122,8 @@ async def create_property(
     db.commit()
 
     # Uploading files
-    upload_folder = './uploads'
-    os.makedirs(upload_folder, exist_ok=True)
+    upload_folder = './uploads' 
+    os.makedirs(upload_folder, exist_ok=True) 
     
     # Tax document
     tax_document_filename = f"{new_property.id}_tax_{tax_document.filename}"

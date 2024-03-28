@@ -22,7 +22,8 @@ origins = [
     "http://localhost:8080", 
     "http://127.0.0.1:8000", 
     "https://actyvalfront-d1dc51d23b00.herokuapp.com",
-    "https://actyvalback-d9f64fe66c43.herokuapp.com"
+    "https://actyvalback-d9f64fe66c43.herokuapp.com",
+    "https://app.actyvalores.com/"
 ]
 
 actyval.add_middleware(
