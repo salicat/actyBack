@@ -215,7 +215,8 @@ async def create_affiliate_user(
 
 @router.post("/user/auth/")  #LOGS
 async def auth_user(user_au: UserAuth, db: Session = Depends(get_db)):
-    user_in_db = db.query(UserInDB).filter_by(email=user_au.email).first()
+    input_email = user_au.email.lower()
+    user_in_db = db.query(UserInDB).filter(func.lower(UserInDB.email) == input_email).first()
     if not user_in_db:
         # Log failed login attempt
         log_entry = LogsInDb(
