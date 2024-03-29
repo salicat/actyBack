@@ -44,4 +44,6 @@ actyval.include_router(router_files)
 
 
 # Mount the '/admin/uploads' path to serve static files from the './uploads/' directory
-actyval.mount("/uploads", StaticFiles(directory="./uploads"), name="uploads")
+actyval.mount("/uploads", StaticFiles(directory="uploads"), name="uploads")
+
+
