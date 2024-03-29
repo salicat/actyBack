@@ -21,8 +21,7 @@ origins = [
     "https://localhost.tiangolo.com",
     "http://localhost:8080", 
     "http://127.0.0.1:8000", 
-    "https://actyvalback-d9f64fe66c43.herokuapp.com",
-    "https://app.actyvalores.com/"
+    "https://app.actyvalores.com"
 ]
 
 actyval.add_middleware(
