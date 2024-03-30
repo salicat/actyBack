@@ -1,5 +1,5 @@
 from fastapi import APIRouter, Depends, HTTPException, UploadFile, File as FastAPIFile, Header, Form
-from datetime import date, datetime, timedelta
+from datetime import date, datetime, timedelta, timezone
 from dateutil.relativedelta import relativedelta
 from sqlalchemy.orm import Session
 from db.db_connection import get_db
@@ -11,7 +11,7 @@ import shutil
 import json
 
 
-utc_now                 = datetime.utcnow()
+utc_now                 = datetime.now(timezone.utc)
 utc_offset              = timedelta(hours=-5)
 local_now               = utc_now + utc_offset
 local_timestamp_str     = local_now.strftime('%Y-%m-%d %H:%M:%S.%f')

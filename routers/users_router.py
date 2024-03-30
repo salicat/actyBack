@@ -5,7 +5,7 @@ from db.all_db import UserInDB, MortgageInDB, LogsInDb, RegsInDb, PropInDB, Pena
 from models.user_models import UserIn, UserAuth, UserInfoAsk
 from passlib.context import CryptContext
 from jose import jwt
-from datetime import datetime, timedelta
+from datetime import datetime, timedelta, timezone
 from sqlalchemy import func
 import json
 import os
@@ -13,7 +13,7 @@ import shutil
 
 pwd_context = CryptContext(schemes=["bcrypt"], deprecated="auto")
 
-utc_now                 = datetime.utcnow() 
+utc_now                 = datetime.now(timezone.utc)
 utc_offset              = timedelta(hours=-5)
 local_now               = utc_now + utc_offset
 local_timestamp_str     = local_now.strftime('%Y-%m-%d %H:%M:%S.%f')

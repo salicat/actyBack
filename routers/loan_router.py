@@ -6,13 +6,13 @@ from db.db_connection import get_db
 from db.all_db import PropInDB, UserInDB, LogsInDb, LoanProgress, File 
 from models.property_models import PropCreate, StatusUpdate
 from models.loan_prog_models import LoanProgressInfo, LoanProgressUpdate
-from datetime import datetime, timedelta
+from datetime import datetime, timedelta, timezone
 from sqlalchemy.sql import func
 import jwt
 import re
  
 
-utc_now                 = datetime.utcnow()
+utc_now                 = utc_now = datetime.now(timezone.utc)
 utc_offset              = timedelta(hours=-5)
 local_now               = utc_now + utc_offset
 local_timestamp_str     = local_now.strftime('%Y-%m-%d %H:%M:%S.%f')

@@ -4,10 +4,10 @@ from sqlalchemy import desc
 from db.db_connection import get_db
 from db.all_db import MortgageInDB, UserInDB, PropInDB, RegsInDb, File, LogsInDb, LoanProgress
 from models.mortgage_models import MortgageCreate, MortStage
-from datetime import timedelta, date, datetime
+from datetime import timedelta, date, datetime, timezone
 import jwt
 
-utc_now = datetime.utcnow() 
+utc_now = datetime.now(timezone.utc)
 utc_offset = timedelta(hours=-5)
 local_now = utc_now + utc_offset
 local_timestamp_str = local_now.strftime('%Y-%m-%d %H:%M:%S.%f')
@@ -104,14 +104,14 @@ def create_mortgage(mortgage_data   : MortgageCreate,
         existing_mortgage.debtor_id = debtor.id_number
         existing_mortgage.agent_id = agent.id_number if agent else None
         existing_mortgage.start_date = mortgage_data.start_date
-        existing_mortgage.initial_balance = mortgage_data.initial_balance
+        existing_mortgage.initial_balance = mortgage_data.initial_balance 
         existing_mortgage.interest_rate = mortgage_data.interest_rate
         existing_mortgage.current_balance = mortgage_data.current_balance
         existing_mortgage.monthly_payment = (mortgage_data.initial_balance * mortgage_data.interest_rate) / 100, 
         existing_mortgage.mortgage_stage = "active"
         existing_mortgage.mortgage_status = "active"  # Assuming the mortgage becomes active after update
         existing_mortgage.last_update = local_timestamp_str
-        existing_mortgage.comments = 'Valor a desembolsar ',mortgage_data.current_balance - (mortgage_data.initial_balance * mortgage_data.interest_rate) / 100
+        existing_mortgage.comments = 'Crédito desembolsado'
         db.commit()   
         message = "Mortgage updated successfully, First reg created"
         new_reg = RegsInDb(

@@ -6,14 +6,14 @@ from db.all_db import PropInDB, UserInDB, LogsInDb, LoanProgress, MortgageInDB
 from db.all_db import File
 from models.property_models import PropCreate, StatusUpdate
 from models.mortgage_models import MortgageCreate
-from datetime import datetime, timedelta
+from datetime import datetime, timedelta, timezone
 from sqlalchemy.orm import joinedload
 import jwt
 import os
 import shutil
 import json
 
-utc_now                 = datetime.utcnow()
+utc_now                 = datetime.now(timezone.utc)
 utc_offset              = timedelta(hours=-5)
 local_now               = utc_now + utc_offset
 local_timestamp_str     = local_now.strftime('%Y-%m-%d %H:%M:%S.%f')
@@ -431,7 +431,7 @@ def update_property_status(matricula_id: str, status_update: StatusUpdate, db: S
     decoded_token       = decode_jwt(token)
     role_from_token     = decoded_token.get("role")
 
-    if role_from_token is None:
+    if role_from_token is None: 
         # Log unauthorized access attempt
         log_entry = LogsInDb(
             action      = "User Alert",
@@ -631,6 +631,8 @@ def select_property(property_id: int, db: Session = Depends(get_db), token: str 
     db.add(mortgage)
     db.commit()
 
+    property.comments = "selected"
+    
     # Log the property selection
     log_entry = LogsInDb(
         action="Property Selected",

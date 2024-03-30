@@ -75,7 +75,7 @@ class PropInDB(Base):
     area            = Column(Integer)
     type            = Column(String)
     tax_valuation   = Column(Integer) #this will need a file
-    loan_solicited  = Column(Integer)
+    loan_solicited  = Column(Integer) 
     rate_proposed   = Column(Float)
     evaluation      = Column(String)
     study           = Column(String)    # NEW  "study" => "approved" 
