@@ -575,7 +575,7 @@ def update_property_status(matricula_id: str, status_update: StatusUpdate, db: S
         }
     }
 
-@router.put("/property/select/{property_id}")
+@router.put("/property/select/{property_id}") 
 def select_property(property_id: int, db: Session = Depends(get_db), token: str = Header(None)):
     if not token:
         # Log unauthorized access attempt
@@ -601,7 +601,7 @@ def select_property(property_id: int, db: Session = Depends(get_db), token: str 
             action      = "User Alert",
             timestamp   = local_timestamp_str,
             message     = "Unauthorized attempt to select property (Invalid role or token)",
-            user_id=user_id_from_token
+            user_id     = user_id_from_token
         )
         db.add(log_entry)
         db.commit()
@@ -635,10 +635,10 @@ def select_property(property_id: int, db: Session = Depends(get_db), token: str 
     
     # Log the property selection
     log_entry = LogsInDb(
-        action="Property Selected",
-        timestamp=local_timestamp_str,
-        message=f"Property id {property_id} selected by {lender.username}",
-        user_id=user_id_from_token
+        action      = "Property Selected",
+        timestamp   = local_timestamp_str,
+        message     = f"Property id {property_id} selected by {lender.username}",
+        user_id     = user_id_from_token
     )
     db.add(log_entry)
     db.commit()

@@ -15,13 +15,15 @@ class UserInDB(Base):
     user_department = Column(String, nullable=True)
     id_number       = Column(String, unique=True, index=True) #this will need a file
     tax_id          = Column(String, unique=True) #this will need a file
-    score           = Column(String)
+    score           = Column(String)  # Credit Score for Debtors, Money Laundry for Investors
     user_status     = Column(String)  #/ incomplete / complete / complete and verified    
     account_type    = Column(String)
     account_number  = Column(String)
     bank_name       = Column(String)
     agent           = Column(Boolean, default=False)   #THIS IS TRUE FOR INVESTMENT AGENTS ONLY
     added_by        = Column(Integer, ForeignKey("users.id"))
+    
+    
 
     owned_properties    = relationship("PropInDB", back_populates="owner")
     lent_mortgages      = relationship("MortgageInDB", foreign_keys="[MortgageInDB.lender_id]", back_populates="lender")
@@ -33,10 +35,10 @@ class UserInDB(Base):
     affiliate_activities = relationship("AffiliateActivity", foreign_keys="[AffiliateActivity.affiliate_id]")
     referred_by_affiliate = relationship("AffiliateActivity", foreign_keys="[AffiliateActivity.referred_user_id]")
 
-class AffiliatesInDb(Base):
+class AffiliatesInDb(Base):       # Not used
     __tablename__ = "affiliates"
     id          = Column(Integer, primary_key=True, autoincrement=True)
-    url         = Column(String, unique=True)
+    url         = Column(String, unique=True) 
     user_id     = Column(String, ForeignKey("users.id_number"))
     client_id   = Column(String, ForeignKey("users.id_number"))     
 
@@ -51,7 +53,7 @@ class RegsInDb(Base):
     concept         = Column(String)
     amount          = Column(Integer) #what system charges "credits"
     penalty         = Column(Integer)
-    min_payment     = Column(Integer) 
+    min_payment     = Column(Integer) # calculated by system
     limit_date      = Column(Date)
     to_main_balance = Column(Integer)         
     comprobante     = Column(String) #this will need a file

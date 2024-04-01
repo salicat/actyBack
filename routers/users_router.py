@@ -35,6 +35,46 @@ def save_file_to_db(db: Session, entity_type: str, entity_id: int, file_type: st
     db.refresh(new_file)
     return new_file
 
+required_fields_by_role = {
+    "agent"     : ["username", 
+                   "id_number", 
+                   "phone",
+                   "user_city", 
+                   "user_department", 
+                   "tax_id",
+                   "account_type",
+                   "account_number",
+                   "bank_name"
+                   ], 
+    "lender"    : ["username", 
+                   "id_number",
+                   "phone", 
+                   "user_city", 
+                   "user_department", 
+                   "tax_id",
+                   "account_type",
+                   "account_number",
+                   "bank_name"
+                   ], 
+    "debtor"    : ["username", 
+                   "id_number", 
+                   "phone", 
+                   "legal_address",
+                   "user_city", 
+                   "user_department", 
+                   "tax_id"
+                   ]
+}
+
+def validate_user_info(user: UserInDB) -> bool:
+    required_fields = required_fields_by_role.get(user.role, [])
+    user_data = user.__dict__ 
+    for field in required_fields:
+        if field not in user_data or not user_data[field]:
+            return False
+    return True
+
+
 @router.post("/user/create/")  # LOGS
 async def create_user(user_in: UserIn, db: Session = Depends(get_db)):
     allowed_roles = ["admin", "lender", "debtor", "agent"]  
@@ -100,12 +140,11 @@ async def create_user(user_in: UserIn, db: Session = Depends(get_db)):
         "legal_address"     : new_user.legal_address,
         "user_city"         : new_user.user_city,
         "user_department"   : new_user.user_department,
-        "id_number"         : new_user.id_number
+        "id_number"         : new_user.id_number,
+        "user_status"       : new_user.user_status
     }
 
     return user_data
-
-
 
 
 def create_access_token(username: str, role: str, user_id:str, user_pk:int, user_st:str, expires_delta: timedelta = None):
@@ -117,7 +156,7 @@ def create_access_token(username: str, role: str, user_id:str, user_pk:int, user
         "st"    : user_st
     }
     if expires_delta:
-        expire = datetime.utcnow() + expires_delta
+        expire = datetime.utcnow() + expires_delta 
     else:
         expire = datetime.utcnow() + timedelta(minutes=15)
     to_encode.update({"exp": expire.timestamp()})
@@ -192,7 +231,6 @@ async def create_affiliate_user(
         added_by        = agent_id
     )
 
-
     new_user.agent = False    
     new_user.user_status = "incomplete"    
 
@@ -212,7 +250,6 @@ async def create_affiliate_user(
     return {"message": f"Has creado el usuario '{user_in.username}'"}
 
 
-
 @router.post("/user/auth/")  #LOGS
 async def auth_user(user_au: UserAuth, db: Session = Depends(get_db)):
     input_email = user_au.email.lower()
@@ -224,7 +261,7 @@ async def auth_user(user_au: UserAuth, db: Session = Depends(get_db)):
             timestamp   = datetime.utcnow(),
             message     = f"User with email '{user_au.email}' does not exist",
             user_id     = None  
-        )
+        ) 
         db.add(log_entry)
         db.commit()
         raise HTTPException(status_code=404, detail="El usuario no existe")
@@ -274,10 +311,10 @@ async def get_mi_perfil(user_info_ask: str, db: Session = Depends(get_db)):
         raise HTTPException(status_code=404, detail="El usuario no existe")
 
     log_entry = LogsInDb(
-        action="Profile Accessed",
-        timestamp=datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
-        message=f"Profile accessed for user with ID '{user_info_ask}' (Username: {user_info.username})",
-        user_id=user_info.id_number
+        action      = "Profile Accessed",
+        timestamp   = datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
+        message     = f"Profile accessed for user with ID '{user_info_ask}' (Username: {user_info.username})",
+        user_id     = user_info.id_number
     )
     db.add(log_entry)
     db.commit()
@@ -289,6 +326,7 @@ async def get_mi_perfil(user_info_ask: str, db: Session = Depends(get_db)):
         "cedula_back": None,
         "tax_id_file": None,
         "bank_certification": None,
+        "profile_picture" : None
     }
 
     # Update to check file existence and include path
@@ -302,6 +340,8 @@ async def get_mi_perfil(user_info_ask: str, db: Session = Depends(get_db)):
             file_key = "tax_id_file"
         elif file.file_type == "bank_certification":
             file_key = "bank_certification"
+        elif file.file_type == "profile_picture":
+            file_key = "profile_picture"
         
         if file_key:
             documents_status[file_key] = {"uploaded": True, "path": file.file_location}
@@ -323,8 +363,9 @@ async def get_mi_perfil(user_info_ask: str, db: Session = Depends(get_db)):
             {"name": "Cedula cara posterior", "key": "cedula_back", "uploaded": documents_status["cedula_back"] != None, "path": documents_status["cedula_back"]["path"] if documents_status["cedula_back"] else None},
             {"name": "Rut", "key": "tax_id_file", "uploaded": documents_status["tax_id_file"] != None, "path": documents_status["tax_id_file"]["path"] if documents_status["tax_id_file"] else None},
             {"name": "Certificacion bancaria", "key": "bank_certification", "uploaded": documents_status["bank_certification"] != None, "path": documents_status["bank_certification"]["path"] if documents_status["bank_certification"] else None},
-        ]
-    }
+            {"name": "Foto de Perfil", "key": "profile_picture", "uploaded": documents_status["profile_picture"] !=None, "path": documents_status["profile_picture"]["path"] if documents_status["profile_picture"] else None}             
+            ]
+        }
     return user_info_dict
 
 
@@ -668,6 +709,7 @@ async def update_user_info(
     cedula_front        : UploadFile = FastAPIFile(None),
     cedula_back         : UploadFile = FastAPIFile(None),
     bank_certification  : UploadFile = FastAPIFile(None), 
+    profile_picture     : UploadFile = FastAPIFile(None),
     user_data           : str = Form(...),
     db                  : Session = Depends(get_db),
     token               : str = Header(None)
@@ -710,7 +752,8 @@ async def update_user_info(
         "tax_id_file"       : tax_id_file,
         "cedula_front"      : cedula_front,
         "cedula_back"       : cedula_back,
-        "bank_certification": bank_certification
+        "bank_certification": bank_certification,
+        "profile_picture"   : profile_picture
     }
     for file_key, file in files.items():
         if file:
@@ -727,6 +770,12 @@ async def update_user_info(
         user_id     = user_id_from_token
     )
     db.add(log_entry)
+    db.commit()
+    
+    db_user = db.query(UserInDB).filter(UserInDB.id_number == id_number).first()
+    user_info_complete = validate_user_info(db_user)
+    user_status = "complete" if user_info_complete else "incomplete"
+    db_user.user_status = user_status
     db.commit()
 
     return {"message": "Información de usuario actualizada correctamente"}

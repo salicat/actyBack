@@ -11,7 +11,7 @@ class UserIn(BaseModel):
     legal_address   : Optional [str]= None
     user_city       : Optional [str]= None
     user_department : Optional [str]= None
-    id_number       : str
+    id_number       : Optional [str]= None
     agent           : Optional [str]= None
     added_by        : Optional [int]= None
     
