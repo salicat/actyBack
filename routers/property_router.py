@@ -51,6 +51,7 @@ async def create_property(
     tax_document    : UploadFile    = FastAPIFile(...), 
     property_photo  : UploadFile    = FastAPIFile(...),
     property_ctl    : UploadFile    = FastAPIFile(...), 
+    app_form        : Optional[UploadFile] = FastAPIFile(...),
     property_data   : str           = Form(...),
     db              : Session       = Depends(get_db), 
     token           : str           = Header(None)
@@ -67,11 +68,11 @@ async def create_property(
     decoded_token       = decode_jwt(token)
     role_from_token     = decoded_token.get("role")
     user_id_from_token  = decoded_token.get("id")
-
+ 
     if role_from_token is None:
         log_entry = LogsInDb(
             action      = "User Alert", 
-            timestamp   = datetime.now(), 
+            timestamp   = local_timestamp_str, 
             message     = "Unauthorized property creation attempt (Invalid or missing role in the token)", 
             user_id     = None)
         db.add(log_entry)
@@ -81,7 +82,7 @@ async def create_property(
     if role_from_token not in ["admin", "debtor", "agent"]:
         log_entry = LogsInDb(
             action      = "User Alert", 
-            timestamp   = datetime.now(), 
+            timestamp   = local_timestamp_str, 
             message     = "Unauthorized property creation attempt (Insufficient permissions)", 
             user_id     = None)
         db.add(log_entry)
@@ -94,7 +95,7 @@ async def create_property(
     if property_exists:
         log_entry = LogsInDb(
             action      = "Property Creation Failed", 
-            timestamp   = datetime.now(), 
+            timestamp   = local_timestamp_str, 
             message     = f"Property creation failed (Duplicate matricula_id: {matricula_id})", 
             user_id     = user_id_from_token)
         db.add(log_entry)
@@ -117,7 +118,7 @@ async def create_property(
         notes       = f"Solicitud de crédito iniciada por {role_from_token}",
         updated_by  = user_id_from_token  
     )
-     
+      
     db.add(new_loan_progress)
     db.commit()
 
@@ -146,6 +147,14 @@ async def create_property(
         shutil.copyfileobj(property_ctl.file, buffer)
     save_file_to_db(db, "property", new_property.id, "property_ctl", property_ctl_location)
     
+    #application_form
+    if app_form:    
+        app_form_filename   = f"{new_property.id}_appForm_{app_form.filename}"
+        app_form_location   =f"{upload_folder}/{app_form_filename}"
+        with open(app_form_location, "wb") as buffer:
+            shutil.copyfileobj(app_form.file, buffer)
+        save_file_to_db(db, "property", new_property.id, "app_form", app_form_location)
+        
     log_entry = LogsInDb(
         action      = "Property Created", 
         timestamp   = datetime.now(), 

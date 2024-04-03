@@ -6,16 +6,16 @@ class PropCreate(BaseModel):
     id              : Optional[int]  
     owner_id        : str
     matricula_id    : str
-    address         : str
-    neighbourhood   : str
-    city            : str
-    department      : str
-    strate          : int 
-    area            : int
-    type            : str 
-    tax_valuation   : int
+    address         : Optional[str] = None
+    neighbourhood   : Optional[str] = None
+    city            : Optional[str] = None
+    department      : Optional[str] = None
+    strate          : Optional[int] = None
+    area            : Optional[int] = None
+    type            : Optional[str] = None
+    tax_valuation   : Optional[int] = None
     tax_valuation_file: UploadFile = None
-    loan_solicited  : int
+    loan_solicited  : Optional[int] = None
     rate_proposed   : Optional[float] = None
     evaluation      : Optional[str] = None
     study           : Optional[str] = None

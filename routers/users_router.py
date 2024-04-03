@@ -156,9 +156,9 @@ def create_access_token(username: str, role: str, user_id:str, user_pk:int, user
         "st"    : user_st
     }
     if expires_delta:
-        expire = datetime.utcnow() + expires_delta 
+        expire = datetime.now() + expires_delta 
     else:
-        expire = datetime.utcnow() + timedelta(minutes=15)
+        expire = datetime.now() + timedelta(minutes=15)
     to_encode.update({"exp": expire.timestamp()})
     encoded_jwt = jwt.encode(to_encode, SECRET_KEY, algorithm=ALGORITHM)
     return encoded_jwt
@@ -185,10 +185,10 @@ async def create_affiliate_user(
         raise HTTPException(status_code=401, detail="Token not provided")
 
     # Decode token to extract role and id 
-    decoded_token = decode_jwt(token)
-    role_from_token = decoded_token.get("role")
-    user_id_from_token = decoded_token.get("id")
-    agent_id = decoded_token.get("pk")
+    decoded_token       = decode_jwt(token)
+    role_from_token     = decoded_token.get("role")
+    user_id_from_token  = decoded_token.get("id")
+    agent_id            = decoded_token.get("pk")
 
     # Check if role is valid for creating affiliate users
     if role_from_token.lower() not in ["admin", "agent"]:
@@ -239,10 +239,10 @@ async def create_affiliate_user(
     db.refresh(new_user)
 
     log_entry = LogsInDb(
-        action="User Created",
-        timestamp=local_timestamp_str,
-        message=f"User with username '{user_in.username}' has been registered by {role_from_token}",
-        user_id=user_id_from_token
+        action      = "User Created",
+        timestamp   = local_timestamp_str,
+        message     = f"User with username '{user_in.username}' has been registered by {role_from_token}",
+        user_id     = user_id_from_token
     )
     db.add(log_entry)
     db.commit()
@@ -258,7 +258,7 @@ async def auth_user(user_au: UserAuth, db: Session = Depends(get_db)):
         # Log failed login attempt
         log_entry = LogsInDb(
             action      = "User Alert",
-            timestamp   = datetime.utcnow(),
+            timestamp   = local_timestamp_str,
             message     = f"User with email '{user_au.email}' does not exist",
             user_id     = None  
         ) 
@@ -270,7 +270,7 @@ async def auth_user(user_au: UserAuth, db: Session = Depends(get_db)):
         # Log failed login attempt due to wrong password
         log_entry       = LogsInDb(
             action      = "User Alert",
-            timestamp   = datetime.utcnow(),
+            timestamp   = local_timestamp_str,
             message     = f"User with email '{user_au.email}' entered the wrong password",
             user_id     = user_in_db.id_number
         )
@@ -312,7 +312,7 @@ async def get_mi_perfil(user_info_ask: str, db: Session = Depends(get_db)):
 
     log_entry = LogsInDb(
         action      = "Profile Accessed",
-        timestamp   = datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
+        timestamp   = local_timestamp_str,
         message     = f"Profile accessed for user with ID '{user_info_ask}' (Username: {user_info.username})",
         user_id     = user_info.id_number
     )
@@ -507,7 +507,6 @@ async def get_all_users(
         users_added_by_agent = db.query(UserInDB).filter(UserInDB.added_by == user_pk).all()
         user_info = []
         for user in users_added_by_agent:
-            # Retrieve loan requests for each user
             loan_requests = db.query(PropInDB).filter(PropInDB.owner_id == user.id_number).all()
             solicitudes = [{
                 "property_id"   : request.id, # Assuming there's an ID field
@@ -525,6 +524,7 @@ async def get_all_users(
             } for request in loan_requests]
             user_info.append({
                 "username"      : user.username,
+                "role"          : user.role,
                 "id_number"     : user.id_number,
                 "email"         : user.email,
                 "phone"         : user.phone,
@@ -536,7 +536,34 @@ async def get_all_users(
         raise HTTPException(status_code=403, detail="No tienes permiso de ver esta información")
 
 
+@router.get("/agent/clients/")  # Logs for Admin and Agent, token required
+async def get_all_users(
+    db: Session = Depends(get_db),
+    token: str = Header(None)
+):
+    if not token:
+        raise HTTPException(status_code=401, detail="Token not provided")
 
+    decoded_token = decode_jwt(token)
+    role    = decoded_token.get("role")
+    user_pk = decoded_token.get("pk")  # Added primary key of the agent
+
+    if role == "agent" or "admin":
+        users_added_by_agent = db.query(UserInDB).filter(UserInDB.added_by == user_pk).all()
+        user_info = []
+        for user in users_added_by_agent:
+            if user.role == 'debtor':
+                user_info.append({
+                    "username"      : user.username,
+                    "role"          : user.role,
+                    "id_number"     : user.id_number,
+                    "email"         : user.email,
+                    "phone"         : user.phone,
+                    "status"        : user.user_status,
+                })
+        return user_info
+    else:
+        raise HTTPException(status_code=403, detail="No tienes permiso de ver esta información")
 
 @router.get("/admin_summary")
 def admin_summary(db: Session = Depends(get_db), token: str = Header(None)):
@@ -765,7 +792,7 @@ async def update_user_info(
 
     log_entry = LogsInDb(
         action      = "User Information Updated",
-        timestamp   = datetime.now(),
+        timestamp   = local_timestamp_str,
         message     = f"Information updated for user with ID: {id_number}",
         user_id     = user_id_from_token
     )
