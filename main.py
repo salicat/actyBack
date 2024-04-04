@@ -11,6 +11,10 @@ from routers.loan_router import router as loan_router
 from routers.upload_router import router as router_upload
 from routers.file_router import router as router_files
 from starlette.middleware.trustedhost import TrustedHostMiddleware
+from firebase_init import initialize_firebase
+
+initialize_firebase()
+
 
 actyval = FastAPI()
 

@@ -78,9 +78,11 @@ def validate_user_info(user: UserInDB) -> bool:
 @router.post("/user/create/")  # LOGS
 async def create_user(user_in: UserIn, db: Session = Depends(get_db)):
     allowed_roles = ["admin", "lender", "debtor", "agent"]  
+    for user in user_in:
+        print(user)
     if user_in.role.lower() not in allowed_roles:
         raise HTTPException(status_code=400, detail="Invalid role. Allowed roles are: admin, lender, debtor, agent")
-    
+
     existing_user = db.query(UserInDB).filter(UserInDB.username == user_in.username).first()
     if existing_user:
         raise HTTPException(status_code=400, detail="Usuario ya esta en uso")
@@ -88,9 +90,10 @@ async def create_user(user_in: UserIn, db: Session = Depends(get_db)):
     existing_user = db.query(UserInDB).filter(UserInDB.email == user_in.email).first()
     if existing_user:
         raise HTTPException(status_code=400, detail="Email ya esta en uso")
-    
+
     existing_user = db.query(UserInDB).filter(UserInDB.phone == user_in.phone).first()
     if existing_user:
+        print("Test query found the user:", existing_user.id_number)
         raise HTTPException(status_code=400, detail="Nro telefonico ya fue registrado")
     
     existing_user = db.query(UserInDB).filter(UserInDB.id_number == user_in.id_number).first()
@@ -806,3 +809,25 @@ async def update_user_info(
     db.commit()
 
     return {"message": "Información de usuario actualizada correctamente"}
+
+from fastapi import HTTPException
+
+@router.get("/mail_check/{email}")
+async def check_mail(email: str, db: Session = Depends(get_db)):
+    email = email.lower().strip()
+    user = db.query(UserInDB).filter(UserInDB.email == email).first()
+
+    # Prepare and log the entry regardless of user existence
+    log_entry = LogsInDb(
+        action="Recuperacion de contraseña" if user else "ALERTA! Recuperacion de contraseña correo inexistente",
+        timestamp   = local_timestamp_str,
+        message     = f"Correo usuario: {email}",
+        user_id     = None
+    )
+    db.add(log_entry)
+    db.commit()
+
+    if user:
+        return {"exists": True, "message": "Un correo de recuperación será enviado si la dirección está registrada con nosotros."}
+    else:
+        raise HTTPException(status_code=404, detail="No se encontró un usuario con este email.")
