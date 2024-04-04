@@ -51,7 +51,7 @@ async def create_property(
     tax_document    : UploadFile    = FastAPIFile(...), 
     property_photo  : UploadFile    = FastAPIFile(...),
     property_ctl    : UploadFile    = FastAPIFile(...), 
-    app_form        : Optional[UploadFile] = FastAPIFile(...),
+    app_form        : Optional[UploadFile] = FastAPIFile(None),
     property_data   : str           = Form(...),
     db              : Session       = Depends(get_db), 
     token           : str           = Header(None)
