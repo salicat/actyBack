@@ -8,13 +8,9 @@ from routers.reg_router import router as router_registers
 from routers.penalty_router import router as router_penalties
 from routers.logs_router import router as router_logs
 from routers.loan_router import router as loan_router
-from routers.upload_router import router as router_upload
+from routers.upload_router import router as router_upload 
 from routers.file_router import router as router_files
 from starlette.middleware.trustedhost import TrustedHostMiddleware
-from firebase_init import initialize_firebase
-
-initialize_firebase()
-
 
 actyval = FastAPI()
 
