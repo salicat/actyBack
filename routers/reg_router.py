@@ -226,15 +226,6 @@ def pending_regs(status: str, db: Session = Depends(get_db), token: str = Header
     if not regs:
         return {"records": []}  # Return an empty list if there are no records
 
-    log_entry = LogsInDb(
-        action      = "Admin Accessed Pending Records",
-        timestamp   = local_timestamp_str,
-        message     = f"Records pending retrieved",
-        user_id     = user_id_from_token
-    )
-    db.add(log_entry)
-    db.commit()
-
     return {"records": records}
 
  
@@ -292,16 +283,6 @@ async def get_regs(debtor_id: str, db: Session = Depends(get_db), token: str = H
             return {"message": "El usuario aun no registra movimientos"}
         else:
             return {"message": f"No hay registros para el deudor con ID {debtor_id}"}
-
-    # Log successful retrieval of records
-    log_entry = LogsInDb(
-        action      = "User Accessed Records",
-        timestamp   = local_timestamp_str,
-        message     = f"Records retrieved for debtor with ID: {debtor_id}",
-        user_id     = user_id_from_token
-    )
-    db.add(log_entry)
-    db.commit()
 
     return {"regs": regs}
 
@@ -532,16 +513,6 @@ def get_reg(reg_id: int, db: Session = Depends(get_db), token: str = Header(None
     if not reg:
         raise HTTPException(status_code=404, detail="Registro no encontrado")
 
-    # Log successful register retrieval
-    log_entry = LogsInDb(
-        action="Register Retrieved",
-        timestamp=local_timestamp_str,
-        message=f"Registro {reg_id} recuperado exitosamente",
-        user_id=decoded_token.get("id")
-    )
-    db.add(log_entry)
-    db.commit()
-
     return reg_to_dict(reg)
 
 
@@ -602,9 +573,6 @@ def update_register_status(reg_update: RegsUpDate, db: Session = Depends(get_db)
     db.commit()
 
     return {"message": f"Registro {reg_update.reg_id} actualizado exitosamente"}
-
-
-
 
     
 @router.delete("/registers/delete/{register_id}")

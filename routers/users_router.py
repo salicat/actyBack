@@ -9,7 +9,7 @@ from datetime import datetime, timedelta, timezone
 from sqlalchemy import func
 import json
 import os
-import shutil
+import shutil 
 
 pwd_context = CryptContext(schemes=["bcrypt"], deprecated="auto")
 
@@ -258,27 +258,9 @@ async def auth_user(user_au: UserAuth, db: Session = Depends(get_db)):
     input_email = user_au.email.lower()
     user_in_db = db.query(UserInDB).filter(func.lower(UserInDB.email) == input_email).first()
     if not user_in_db:
-        # Log failed login attempt
-        log_entry = LogsInDb(
-            action      = "User Alert",
-            timestamp   = local_timestamp_str,
-            message     = f"User with email '{user_au.email}' does not exist",
-            user_id     = None  
-        ) 
-        db.add(log_entry)
-        db.commit()
         raise HTTPException(status_code=404, detail="El usuario no existe")
         
     if not pwd_context.verify(user_au.password, user_in_db.hashed_password):
-        # Log failed login attempt due to wrong password
-        log_entry       = LogsInDb(
-            action      = "User Alert",
-            timestamp   = local_timestamp_str,
-            message     = f"User with email '{user_au.email}' entered the wrong password",
-            user_id     = user_in_db.id_number
-        )
-        db.add(log_entry)
-        db.commit()
         raise HTTPException(status_code=403, detail="Error de autenticacion")
 
     log_entry = LogsInDb(
@@ -312,16 +294,6 @@ async def get_mi_perfil(user_info_ask: str, db: Session = Depends(get_db)):
     user_info = db.query(UserInDB).filter_by(id_number=user_info_ask).first()
     if not user_info:
         raise HTTPException(status_code=404, detail="El usuario no existe")
-
-    log_entry = LogsInDb(
-        action      = "Profile Accessed",
-        timestamp   = local_timestamp_str,
-        message     = f"Profile accessed for user with ID '{user_info_ask}' (Username: {user_info.username})",
-        user_id     = user_info.id_number
-    )
-    db.add(log_entry)
-    db.commit()
-
     
     user_files = db.query(File).filter(File.entity_id == user_info.id).all()  # Assuming 'entity_id' references 'UserInDB.id'
     documents_status = {
@@ -378,50 +350,13 @@ async def get_user_info(user_info_ask: UserInfoAsk, db: Session = Depends(get_db
 
     decoded_token = decode_jwt(token)
     role_from_token = decoded_token.get("role")
-
-    if role_from_token is None:
-        log_entry = LogsInDb(
-            action      = "User Alert",
-            timestamp   = local_timestamp_str,
-            message     = "Unauthorized access attempt to user information (Invalid or missing role in the token)",
-            user_id     = None  # You can leave user_id as None for unauthorized access
-        )
-        db.add(log_entry)
-        db.commit()
         
     if role_from_token != "admin":
-        log_entry = LogsInDb(
-            action      = "User Alert",
-            timestamp   = local_timestamp_str,
-            message     = "Unauthorized access attempt to user information (Insufficient permissions)",
-            user_id     = None  # You can leave user_id as None for unauthorized access
-        )
-        db.add(log_entry)
-        db.commit()
-
         raise HTTPException(status_code=403, detail="No tienes permiso de ver esta informacion")
 
     user = db.query(UserInDB).filter_by(id_number=user_info_ask.id_number).first()
     if not user:
-        log_entry       = LogsInDb(
-            action      = "User Alert",
-            timestamp   = local_timestamp_str,
-            message     = f"User information access failed for user with ID '{user_info_ask.id_number}' (User not found)",
-            user_id     = None  # You can leave user_id as None for non-existent users
-        )
-        db.add(log_entry)
-        db.commit()
-
         raise HTTPException(status_code=404, detail="User not found")
-
-    log_entry = LogsInDb(
-        action      = "User Info Accessed",
-        timestamp   = local_timestamp_str,
-        message     = f"User information accessed for user with ID '{user_info_ask.id_number}' (Username: {user.username})",
-        user_id     = user.id_number
-    )
-    db.add(log_entry)
-    db.commit()
 
     role = user.role
     mortgages   = 0 
@@ -472,16 +407,6 @@ async def get_all_users(
     user_pk = decoded_token.get("pk")  # Added primary key of the agent
 
     if role == "admin":
-        # Log user information access by admin
-        log_entry = LogsInDb(
-            action      ="User Information Accessed",
-            timestamp   = local_timestamp_str,
-            message     = f"Users information accessed by {role} (User ID: {user_id})",
-            user_id     = user_id
-        )
-        db.add(log_entry)
-        db.commit()
-
         # Retrieve all users
         users       = db.query(UserInDB).all() 
         user_info   = []
@@ -496,16 +421,6 @@ async def get_all_users(
         return user_info
 
     elif role == "agent":
-        # Log user information access by agent
-        log_entry = LogsInDb(
-            action      = "User Information Accessed",
-            timestamp   = local_timestamp_str,
-            message     = f"Users information accessed by {role} (User ID: {user_id})",
-            user_id     = user_id
-        )
-        db.add(log_entry)
-        db.commit()
-
         # Retrieve users added by the agent
         users_added_by_agent = db.query(UserInDB).filter(UserInDB.added_by == user_pk).all()
         user_info = []
@@ -588,15 +503,6 @@ def admin_summary(db: Session = Depends(get_db), token: str = Header(None)):
     role_from_token = decoded_token.get("role")
 
     if role_from_token != "admin":
-        # Log unauthorized access attempt
-        log_entry = LogsInDb(
-            action      = "User Alert",
-            timestamp   = local_timestamp_str,
-            message     = "Unauthorized access attempt to admin summary (Insufficient privileges)",
-            user_id     = decoded_token.get("id")
-        )
-        db.add(log_entry)
-        db.commit()
         raise HTTPException(status_code=403, detail="Insufficient privileges")
  
     # Get total count of mortgages, registers, and users
@@ -670,18 +576,6 @@ def admin_summary(db: Session = Depends(get_db), token: str = Header(None)):
         "posted_props"              : posted_props,
         "selected_props"            : selected_props,
     }
-
-
-    # Log successful access to admin summary
-    log_entry = LogsInDb(
-        action      = "Admin Summary Accessed",
-        timestamp   = local_timestamp_str,
-        message     = "Admin summary accessed successfully",
-        user_id     = decoded_token.get("id")
-    )
-    db.add(log_entry)
-    db.commit()
-
     return summary
 
 
@@ -691,44 +585,16 @@ def get_all_registers(db: Session = Depends(get_db), token: str = Header(None)):
     
     # Token verification
     if not token:
-        # Log unauthorized access attempt
-        log_entry = LogsInDb(
-            action      = "User Alert",
-            timestamp   = local_timestamp_str,
-            message     = "Unauthorized access attempt to all registers (Token not provided)",
-            user_id     = None
-        )
-        db.add(log_entry)
-        db.commit()
         raise HTTPException(status_code=401, detail="Token not provided")
 
     decoded_token   = decode_jwt(token)
     role_from_token = decoded_token.get("role")
 
     if role_from_token != "admin":
-        # Log unauthorized access attempt
-        log_entry = LogsInDb(
-            action      = "User Alert",
-            timestamp   = local_timestamp_str,
-            message     = "Unauthorized access attempt to all registers (Insufficient privileges)",
-            user_id     = decoded_token.get("id")
-        )
-        db.add(log_entry)
-        db.commit()
         raise HTTPException(status_code=403, detail="Insufficient privileges")
 
     # Get all registers
     all_registers = db.query(RegsInDb).all()
-
-    # Log successful access to all registers
-    log_entry = LogsInDb(
-        action      = "All Registers Accessed",
-        timestamp   = local_timestamp_str,
-        message     = "All registers accessed successfully",
-        user_id     = decoded_token.get("id")
-    )
-    db.add(log_entry)
-    db.commit()
 
     return all_registers
 

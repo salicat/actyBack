@@ -215,15 +215,6 @@ def retrieve_property(id_number: str, db: Session = Depends(get_db)):
             user_mortgages.append(mort_dict)
     else:
         user_mortgages = []  # Keep consistent data structure
-    # Log the access
-    log_entry = LogsInDb(
-        action="Properties component accessed",
-        timestamp=local_timestamp_str,
-        message=f"Property information accessed by owner",
-        user_id=id_number
-    )
-    db.add(log_entry)
-    db.commit()
 
     return {"properties" : user_properties, "mortgages" : user_mortgages}
 
@@ -316,9 +307,6 @@ def get_properties_by_status(status: str, db: Session = Depends(get_db), token: 
 
     return properties_data
 
-
-
-
 @router.get("/admin/properties/")   #LOGS #TOKEN-ROLE # posted, selected, funded, mortgage
 def get_properties_by_status(db: Session = Depends(get_db), token: str = Header(None)):
     if not token:
@@ -356,15 +344,6 @@ def get_properties_by_status(db: Session = Depends(get_db), token: str = Header(
         db.add(log_entry)
         db.commit()
         raise HTTPException(status_code=403, detail="No tienes permiso para ver propiedades por estado")
-
-    log_entry = LogsInDb(
-        action      = "Properties accessed by admin",
-        timestamp   = local_timestamp_str,
-        message     = "Admin accessed properties ALL",
-        user_id     = decoded_token.get("id")
-    )
-    db.add(log_entry)
-    db.commit()
 
     properties_data = {
         "estudio"       : [],

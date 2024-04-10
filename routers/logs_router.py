@@ -73,3 +73,28 @@ def get_logs(id_number: str, db: Session = Depends(get_db), token: str = Header(
         })
 
     return response
+
+@router.post('/reg_new_phone/{full_phone_number}')
+def register_new_phone(full_phone_number: str, db: Session = Depends(get_db)):
+    country_code, actual_phone_number = full_phone_number.split('-')
+    
+    country_map = {
+        '+57': 'Colombia',
+        '+1': 'USA',
+        '+34': 'Spain',
+        '+44': 'UK',
+        '+52': 'Mexico',
+    }
+    country_name = country_map.get(country_code, "Unknown Country")
+
+    # Create a new log entry
+    new_log = LogsInDb(
+        action      = f'Phone Registration from - {country_name}',
+        timestamp   = local_timestamp_str,
+        message     = f'Phone number:{country_code} {actual_phone_number} ',
+        user_id     = None  
+    )
+    db.add(new_log)
+    db.commit()
+    
+    return {"message": "Phone registration attempt logged"}
