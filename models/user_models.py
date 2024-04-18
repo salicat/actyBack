@@ -32,6 +32,9 @@ class UserAuth(BaseModel):
 class UserInfoAsk(BaseModel):
     id_number   : str
 
+class PasswordChange(BaseModel):
+    password_change: str
+
     class Config:
         orm_mode = True 
 

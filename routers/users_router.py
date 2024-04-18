@@ -1,15 +1,28 @@
 from fastapi import Depends, APIRouter, HTTPException, Header, UploadFile, File as FastAPIFile, Form
+from fastapi.responses import JSONResponse
 from sqlalchemy.orm import Session 
 from db.db_connection import get_db
 from db.all_db import UserInDB, MortgageInDB, LogsInDb, RegsInDb, PropInDB, PenaltyInDB, File
-from models.user_models import UserIn, UserAuth, UserInfoAsk
+from models.user_models import UserIn, UserAuth, UserInfoAsk, PasswordChange
 from passlib.context import CryptContext
 from jose import jwt
 from datetime import datetime, timedelta, timezone
 from sqlalchemy import func
+from dotenv import load_dotenv
 import json
+import sendgrid
+from sendgrid import SendGridAPIClient
+from sendgrid.helpers.mail import Mail
 import os
 import shutil 
+import random
+import string
+
+
+
+load_dotenv('.env')  # Temporarily add this to users_router.py for debugging
+
+sendgrid_api_key = os.getenv("SENDGRID_API_KEY")
 
 pwd_context = CryptContext(schemes=["bcrypt"], deprecated="auto")
 
@@ -74,6 +87,10 @@ def validate_user_info(user: UserInDB) -> bool:
             return False
     return True
 
+def create_temp_password(username):
+    part_username = username[:3]  
+    random_part = ''.join(random.choices(string.ascii_uppercase + string.digits, k=5))
+    return part_username + random_part
 
 @router.post("/user/create/")  # LOGS
 async def create_user(user_in: UserIn, db: Session = Depends(get_db)):
@@ -182,11 +199,16 @@ async def create_affiliate_user(
     user_in: UserIn,
     db: Session = Depends(get_db),
     token: str = Header(None)
-):
+): 
+    # sendgrid_api_key = os.getenv("SENDGRID_API_KEY")
+    # if not sendgrid_api_key:
+    #     print("SendGrid API key is not set.")
+    #     raise HTTPException(status_code=500, detail="SendGrid API key is not set.")
+    
     # Check if token is provided
     if not token:
         raise HTTPException(status_code=401, detail="Token not provided")
-
+    
     # Decode token to extract role and id 
     decoded_token       = decode_jwt(token)
     role_from_token     = decoded_token.get("role")
@@ -219,38 +241,63 @@ async def create_affiliate_user(
     if existing_user:
         raise HTTPException(status_code=400, detail="Ya hay un usuario credo con ese ID")
 
-    hashed_password = pwd_context.hash(user_in.id_number )
+    temp_password = create_temp_password(user_in.username)
+    
+    # sg = SendGridAPIClient(os.getenv("SENDGRID_API_KEY"))
+    
+    # message = Mail(
+    #     from_email      = 'software@actyvalores.com',  # Make sure this email is verified in your SendGrid account
+    #     to_emails       = user_in.email,
+    #     subject         = 'Bienvenido a nuestra plataforma',
+    #     html_content    = '<strong>Tu contraseña provisional: </strong> + temp_password  
+    # )
+    
+    try:
+        # response = sg.send(message)
+        # print(f"SendGrid Response: {response.status_code}, {response.body}")
+        new_user = UserInDB(
+            role            = user_in.role,
+            username        = user_in.username,
+            email           = user_in.email,
+            hashed_password = temp_password,
+            phone           = user_in.phone,
+            legal_address   = user_in.legal_address,
+            user_city       = user_in.user_city,
+            user_department = user_in.user_department,
+            id_number       = user_in.id_number,
+            added_by        = agent_id
+        )
+
+        new_user.agent = False    
+        new_user.user_status = "temp_password"    
+
+        db.add(new_user)
+        db.commit()
+        db.refresh(new_user)
+
+        log_entry = LogsInDb(
+            action      = "User Created",
+            timestamp   = local_timestamp_str,
+            message     = f"User with username '{user_in.username}' has been registered by {role_from_token}",
+            user_id     = user_id_from_token
+        )
+        db.add(log_entry)
+        db.commit()
+        
+        # return {"message": "User created and email sent to "+ user_in.email , "sendgrid_response": response.body}    
+        return {"message": f"Has creado el usuario '{user_in.username}'",
+                "temporary_password": temp_password
+                }
+    except Exception as e:
+        # print(f"Failed to send email due to: {str(e)}")
+        raise HTTPException(status_code=500, detail=str(e))
+
    
-    new_user = UserInDB(
-        role            = user_in.role,
-        username        = user_in.username,
-        email           = user_in.email,
-        hashed_password = hashed_password,
-        phone           = user_in.phone,
-        legal_address   = user_in.legal_address,
-        user_city       = user_in.user_city,
-        user_department = user_in.user_department,
-        id_number       = user_in.id_number,
-        added_by        = agent_id
-    )
+    
 
-    new_user.agent = False    
-    new_user.user_status = "incomplete"    
+    
 
-    db.add(new_user)
-    db.commit()
-    db.refresh(new_user)
-
-    log_entry = LogsInDb(
-        action      = "User Created",
-        timestamp   = local_timestamp_str,
-        message     = f"User with username '{user_in.username}' has been registered by {role_from_token}",
-        user_id     = user_id_from_token
-    )
-    db.add(log_entry)
-    db.commit()
-
-    return {"message": f"Has creado el usuario '{user_in.username}'"}
+    
 
 
 @router.post("/user/auth/")  #LOGS
@@ -685,7 +732,7 @@ async def check_mail(email: str, db: Session = Depends(get_db)):
 
     # Prepare and log the entry regardless of user existence
     log_entry = LogsInDb(
-        action="Recuperacion de contraseña" if user else "ALERTA! Recuperacion de contraseña correo inexistente",
+        action      = "Recuperacion de contraseña" if user else "ALERTA! Recuperacion de contraseña correo inexistente",
         timestamp   = local_timestamp_str,
         message     = f"Correo usuario: {email}",
         user_id     = None
@@ -697,3 +744,28 @@ async def check_mail(email: str, db: Session = Depends(get_db)):
         return {"exists": True, "message": "Un correo de recuperación será enviado si la dirección está registrada con nosotros."}
     else:
         raise HTTPException(status_code=404, detail="No se encontró un usuario con este email.")
+
+
+@router.put("/update_password/{email}")
+async def update_password(email: str, password_change: PasswordChange, db: Session = Depends(get_db)):
+    db_user = db.query(UserInDB).filter(UserInDB.email == email).first()
+    password = password_change.password_change
+    if db_user is None:
+        raise HTTPException(status_code=404, detail="User not found")
+
+    hashed_password = pwd_context.hash(password)
+    db_user.hashed_password = hashed_password
+    db.commit()
+    db.refresh(db_user)
+
+    # Log the successful password change
+    log_entry = LogsInDb(
+        action      = "Cambio de Contraseña Exitoso",
+        timestamp   = local_timestamp_str,
+        message     = f"Correo {email}",
+        user_id     = db_user.id_number  
+    )
+    db.add(log_entry)
+    db.commit()
+
+    return {"message": "Tu contraseña se ha cambiado exitosamente"}

@@ -1,4 +1,4 @@
-from fastapi import Depends, FastAPI
+from fastapi import FastAPI
 from fastapi.staticfiles import StaticFiles
 from fastapi.middleware.cors import CORSMiddleware
 from routers.users_router import router as router_users
@@ -11,6 +11,11 @@ from routers.loan_router import router as loan_router
 from routers.upload_router import router as router_upload 
 from routers.file_router import router as router_files
 from starlette.middleware.trustedhost import TrustedHostMiddleware
+from dotenv import load_dotenv
+import os
+
+load_dotenv('.env')
+api_key = os.getenv("SENDGRID_API_KEY")
 
 actyval = FastAPI()
 
