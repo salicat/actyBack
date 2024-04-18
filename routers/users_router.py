@@ -1,5 +1,4 @@
 from fastapi import Depends, APIRouter, HTTPException, Header, UploadFile, File as FastAPIFile, Form
-from fastapi.responses import JSONResponse
 from sqlalchemy.orm import Session 
 from db.db_connection import get_db
 from db.all_db import UserInDB, MortgageInDB, LogsInDb, RegsInDb, PropInDB, PenaltyInDB, File
@@ -260,7 +259,6 @@ async def create_affiliate_user(
     db.add(log_entry)
     db.commit()
     
-    # return {"message": "User created and email sent to "+ user_in.email , "sendgrid_response": response.body}    
     return {"message": f"Has creado el usuario '{user_in.username}'",
             "temporary_password": temp_password
             }
