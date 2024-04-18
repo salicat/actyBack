@@ -10,9 +10,6 @@ from datetime import datetime, timedelta, timezone
 from sqlalchemy import func
 from dotenv import load_dotenv
 import json
-import sendgrid
-from sendgrid import SendGridAPIClient
-from sendgrid.helpers.mail import Mail
 import os
 import shutil 
 import random
