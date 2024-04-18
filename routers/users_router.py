@@ -200,10 +200,6 @@ async def create_affiliate_user(
     db: Session = Depends(get_db),
     token: str = Header(None)
 ): 
-    # sendgrid_api_key = os.getenv("SENDGRID_API_KEY")
-    # if not sendgrid_api_key:
-    #     print("SendGrid API key is not set.")
-    #     raise HTTPException(status_code=500, detail="SendGrid API key is not set.")
     
     # Check if token is provided
     if not token:
@@ -243,60 +239,40 @@ async def create_affiliate_user(
 
     temp_password = create_temp_password(user_in.username)
     
-    # sg = SendGridAPIClient(os.getenv("SENDGRID_API_KEY"))
+
+    new_user = UserInDB(
+        role            = user_in.role,
+        username        = user_in.username,
+        email           = user_in.email,
+        hashed_password = temp_password,
+        phone           = user_in.phone,
+        legal_address   = user_in.legal_address,
+        user_city       = user_in.user_city,
+        user_department = user_in.user_department,
+        id_number       = user_in.id_number,
+        added_by        = agent_id
+    )
+
+    new_user.agent = False    
+    new_user.user_status = "temp_password"    
+
+    db.add(new_user)
+    db.commit()
+    db.refresh(new_user)
+
+    log_entry = LogsInDb(
+        action      = "User Created",
+        timestamp   = local_timestamp_str,
+        message     = f"User with username '{user_in.username}' has been registered by {role_from_token}",
+        user_id     = user_id_from_token
+    )
+    db.add(log_entry)
+    db.commit()
     
-    # message = Mail(
-    #     from_email      = 'software@actyvalores.com',  # Make sure this email is verified in your SendGrid account
-    #     to_emails       = user_in.email,
-    #     subject         = 'Bienvenido a nuestra plataforma',
-    #     html_content    = '<strong>Tu contraseña provisional: </strong> + temp_password  
-    # )
-    
-    try:
-        # response = sg.send(message)
-        # print(f"SendGrid Response: {response.status_code}, {response.body}")
-        new_user = UserInDB(
-            role            = user_in.role,
-            username        = user_in.username,
-            email           = user_in.email,
-            hashed_password = temp_password,
-            phone           = user_in.phone,
-            legal_address   = user_in.legal_address,
-            user_city       = user_in.user_city,
-            user_department = user_in.user_department,
-            id_number       = user_in.id_number,
-            added_by        = agent_id
-        )
-
-        new_user.agent = False    
-        new_user.user_status = "temp_password"    
-
-        db.add(new_user)
-        db.commit()
-        db.refresh(new_user)
-
-        log_entry = LogsInDb(
-            action      = "User Created",
-            timestamp   = local_timestamp_str,
-            message     = f"User with username '{user_in.username}' has been registered by {role_from_token}",
-            user_id     = user_id_from_token
-        )
-        db.add(log_entry)
-        db.commit()
-        
-        # return {"message": "User created and email sent to "+ user_in.email , "sendgrid_response": response.body}    
-        return {"message": f"Has creado el usuario '{user_in.username}'",
-                "temporary_password": temp_password
-                }
-    except Exception as e:
-        # print(f"Failed to send email due to: {str(e)}")
-        raise HTTPException(status_code=500, detail=str(e))
-
-   
-    
-
-    
-
+    # return {"message": "User created and email sent to "+ user_in.email , "sendgrid_response": response.body}    
+    return {"message": f"Has creado el usuario '{user_in.username}'",
+            "temporary_password": temp_password
+            }
     
 
 
