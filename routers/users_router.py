@@ -8,18 +8,12 @@ from passlib.context import CryptContext
 from jose import jwt
 from datetime import datetime, timedelta, timezone
 from sqlalchemy import func
-from dotenv import load_dotenv
 import json
 import os
 import shutil 
 import random
 import string
 
-
-
-load_dotenv('.env')  # Temporarily add this to users_router.py for debugging
-
-sendgrid_api_key = os.getenv("SENDGRID_API_KEY")
 
 pwd_context = CryptContext(schemes=["bcrypt"], deprecated="auto")
 
