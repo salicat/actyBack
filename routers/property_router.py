@@ -222,39 +222,15 @@ def retrieve_property(id_number: str, db: Session = Depends(get_db)):
 @router.get("/properties/{status}")  # LOGS #TOKEN-ROLE # posted, selected, funded, mortgage
 def get_properties_by_status(status: str, db: Session = Depends(get_db), token: str = Header(None)):
     if not token:
-        log_entry = LogsInDb(
-            action="User Alert",
-            timestamp=local_timestamp_str,
-            message="Unauthorized attempt to access properties by status (Token not provided)",
-            user_id=None
-        )
-        db.add(log_entry)
-        db.commit()
         raise HTTPException(status_code=401, detail="Token not provided")
 
     decoded_token = decode_jwt(token)
     role_from_token = decoded_token.get("role")
 
     if role_from_token is None:
-        log_entry = LogsInDb(
-            action="User Alert",
-            timestamp=local_timestamp_str,
-            message="Unauthorized attempt to access properties by status (Invalid or missing role in the token)",
-            user_id=None
-        )
-        db.add(log_entry)
-        db.commit()
         raise HTTPException(status_code=403, detail="Token is missing or invalid")
 
     if role_from_token not in ["admin", "lender"]:
-        log_entry = LogsInDb(
-            action="User Alert",
-            timestamp=local_timestamp_str,
-            message="Unauthorized attempt to access properties by status (Insufficient permissions)",
-            user_id=decoded_token.get("id")
-        )
-        db.add(log_entry)
-        db.commit()
         raise HTTPException(status_code=403, detail="No tienes permiso para ver propiedades por estado")
 
     properties_data = []
@@ -303,7 +279,7 @@ def get_properties_by_status(status: str, db: Session = Depends(get_db), token: 
         processed_property_ids.add(property.matricula_id)  # Mark this property as processed
 
     if not properties_data:
-        raise HTTPException(status_code=404, detail=f"No properties found with the status '{status}'")
+        return {"message" : "No Hay Activos Disponibles"}
 
     return properties_data
 

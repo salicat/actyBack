@@ -200,30 +200,7 @@ def get_mortgages_by_debtor(debtor_id: str, db: Session = Depends(get_db)):
 
 @router.get("/mortgages/lender/{lender_id}") #LOGS
 def get_mortgages_by_lender(lender_id: str, db: Session = Depends(get_db)):
-    lender = db.query(UserInDB).filter(UserInDB.id_number == lender_id).first()
     
-    if lender is None:
-        # Log lender not found
-        log_entry = LogsInDb(
-            action      = "User Alert",
-            timestamp   = local_timestamp_str,
-            message     = f"No user found with the provided lender ID: {lender_id}",
-            user_id     = lender_id
-        )
-        db.add(log_entry)
-        db.commit()
-        return {"message": "No user found with the provided lender ID"}
-
-    # Log successful retrieval of investments in mortgages
-    log_entry = LogsInDb(
-        action      = "Investment Component Accessed",
-        timestamp   = local_timestamp_str,
-        message     = f"Investments retrieved for lender with ID: {lender_id}",
-        user_id     = lender_id
-    )
-    db.add(log_entry) 
-    db.commit()
-
     mortgages   = db.query(MortgageInDB).filter(MortgageInDB.lender_id == lender_id).all()
     paid        = []
     regs        = db.query(RegsInDb).filter(RegsInDb.lender_id == lender_id).all()
@@ -461,7 +438,7 @@ def process_mortgages(property_id: int, db: Session = Depends(get_db), token: st
             "email": lender.email
         }
     }
-
+ 
 
 @router.get("/gestion_hipotecas/{property_id}")
 async def gestion_hipotecas(property_id: int, db: Session = Depends(get_db), token: str = Header(None)):

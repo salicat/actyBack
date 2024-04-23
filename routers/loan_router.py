@@ -93,7 +93,7 @@ async def get_loan_applications(db: Session = Depends(get_db), token: str = Head
         )
 
     if not applications:
-        raise HTTPException(status_code=404, detail="No loan applications found")
+        return {"message" : "No Tienes Solicitudes Aún"}
     
     application_data = []
     for app in applications:

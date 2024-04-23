@@ -191,7 +191,7 @@ async def create_affiliate_user(
     token: str = Header(None)
 ): 
     
-    # Check if token is provided
+    # Check if token is provided 
     if not token:
         raise HTTPException(status_code=401, detail="Token not provided")
     
@@ -228,13 +228,13 @@ async def create_affiliate_user(
         raise HTTPException(status_code=400, detail="Ya hay un usuario credo con ese ID")
 
     temp_password = create_temp_password(user_in.username)
-    
+    hashed =pwd_context.hash(temp_password)    
 
     new_user = UserInDB(
         role            = user_in.role,
         username        = user_in.username,
         email           = user_in.email,
-        hashed_password = temp_password,
+        hashed_password = hashed,
         phone           = user_in.phone,
         legal_address   = user_in.legal_address,
         user_city       = user_in.user_city,
@@ -243,6 +243,8 @@ async def create_affiliate_user(
         added_by        = agent_id
     )
 
+    #send email to username with email + temp_password
+    
     new_user.agent = False    
     new_user.user_status = "temp_password"    
 
@@ -647,6 +649,9 @@ async def update_user_info(
         raise HTTPException(status_code=400, detail="Invalid JSON format for user_data")
 
     # Update user information based on data
+    user.legal_address  = data.get('legal_address', user.legal_address)
+    user.user_city      = data.get('user_city', user.user_city)
+    user.user_department= data.get('user_department', user.user_department) 
     user.account_type   = data.get('account_type', user.account_type)
     user.account_number = data.get('account_number', user.account_number)
     user.bank_name      = data.get('bank_name', user.bank_name)
