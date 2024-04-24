@@ -320,20 +320,18 @@ async def get_mi_perfil(user_info_ask: str, db: Session = Depends(get_db)):
 
     # Update to check file existence and include path
     for file in user_files:
-        file_key = None
-        if file.file_type == "cedula_front":
-            file_key = "cedula_front"
-        elif file.file_type == "cedula_back":
-            file_key = "cedula_back"
-        elif file.file_type == "tax_id_file":
-            file_key = "tax_id_file"
-        elif file.file_type == "bank_certification":
-            file_key = "bank_certification"
-        elif file.file_type == "profile_picture":
-            file_key = "profile_picture"
-        
-        if file_key:
-            documents_status[file_key] = {"uploaded": True, "path": file.file_location}
+        if file.file_type in documents_status:
+            # Set or update the document status, checking for the most recent profile picture
+            current_status = documents_status[file.file_type]
+            if file.file_type == "profile_picture":
+                # Update if it's the first profile picture or a newer one based on ID
+                if current_status is None or file.id > current_status["id"]:
+                    documents_status[file.file_type] = {"uploaded": True, "path": file.file_location, "id": file.id}
+                    print(f"Updating profile picture to file with ID {file.id}")
+            else:
+                # For other document types, set if not already set
+                if current_status is None:
+                    documents_status[file.file_type] = {"uploaded": True, "path": file.file_location}
 
     user_info_dict = {
         "username"          : user_info.username,
@@ -670,8 +668,10 @@ async def update_user_info(
     }
     for file_key, file in files.items():
         if file:
+            timestamp = local_timestamp_str
             _, file_ext = os.path.splitext(file.filename)
-            file_path   = os.path.join(upload_folder, f"{id_number}_{file_key}{file_ext}")
+            file_name = f"{id_number}_{file_key}_{timestamp}{file_ext}"
+            file_path = os.path.join(upload_folder, file_name)
             with open(file_path, "wb") as buffer:
                 shutil.copyfileobj(file.file, buffer)
             save_file_to_db(db, "user", user.id, file_key, file_path)
