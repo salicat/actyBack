@@ -141,36 +141,15 @@ def create_mortgage(mortgage_data   : MortgageCreate,
     
 
 
-@router.get("/mortgages/debtor/{debtor_id}") #LOGS
+@router.get("/mortgages/debtor/{debtor_id}") #LOGS 
 def get_mortgages_by_debtor(debtor_id: str, db: Session = Depends(get_db)):
     debtor = db.query(UserInDB).filter(UserInDB.id_number == debtor_id).first()
+    debtor_mail = debtor.email
     
-    if debtor is None:
-        # Log user not found
-        log_entry = LogsInDb(
-            action      = "User Alert",
-            timestamp   = local_timestamp_str,
-            message     = f"User not found with ID: {debtor_id}",
-            user_id     = debtor_id
-        )
-        db.add(log_entry)
-        db.commit()
-        return {"message": "No existe usuario con el ID en referencia"}
-
-    # Log successful retrieval of mortgages
-    log_entry = LogsInDb(
-        action      = "User Accessed Mortgages Component",
-        timestamp   = local_timestamp_str,
-        message     = f"Mortgages retrieved for debtor with ID: {debtor_id}",
-        user_id     = debtor_id
-    )
-    db.add(log_entry)
-    db.commit()
-
     mortgages = db.query(MortgageInDB).filter(MortgageInDB.debtor_id == debtor_id).all()
 
     if not mortgages:
-        return {"message": "No tienes hipotecas como deudor"}
+        return {"message": "No tienes hipotecas como deudor", "email": debtor_mail}
     else:
         mortgage_info = []
 
@@ -194,7 +173,7 @@ def get_mortgages_by_debtor(debtor_id: str, db: Session = Depends(get_db)):
         # Check for pending payments
         payments_pendings = db.query(RegsInDb).filter(RegsInDb.payment_status == "pending", RegsInDb.debtor_id == debtor_id).count()
 
-        return {"mortgage_info": mortgage_info, "payments_pendings": payments_pendings}
+        return {"mortgage_info": mortgage_info, "payments_pendings": payments_pendings, "email": debtor_mail}
 
 
 
@@ -205,15 +184,18 @@ def get_mortgages_by_lender(lender_id: str, db: Session = Depends(get_db)):
     paid        = []
     regs        = db.query(RegsInDb).filter(RegsInDb.lender_id == lender_id).all()
     
+    lender  = db.query(UserInDB).filter(UserInDB.id_number == lender_id).first()
+    lender_email   = lender.email 
+    
     for reg in regs:
         if reg.payment_status == "approved":
             paid.append(reg)
 
     if not mortgages:
-        return {"message": "No tienes inversiones en hipotecas aún"}
+        return {"message": "No tienes inversiones en hipotecas aún", "email" :lender_email}
     else:
         result = [mortgage.__dict__ for mortgage in mortgages]
-        return {"results" :result, "paid" : paid}
+        return {"results" :result, "paid" : paid, "email" :lender_email}
 
 
 

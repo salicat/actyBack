@@ -685,9 +685,9 @@ async def update_user_info(
     db.add(log_entry)
     db.commit()
     
-    db_user = db.query(UserInDB).filter(UserInDB.id_number == id_number).first()
-    user_info_complete = validate_user_info(db_user)
-    user_status = "complete" if user_info_complete else "incomplete"
+    db_user             = db.query(UserInDB).filter(UserInDB.id_number == id_number).first()
+    user_info_complete  = validate_user_info(db_user)
+    user_status         = "complete" if user_info_complete else "incomplete"
     db_user.user_status = user_status
     db.commit()
 
@@ -725,8 +725,15 @@ async def update_password(email: str, password_change: PasswordChange, db: Sessi
 
     hashed_password = pwd_context.hash(password)
     db_user.hashed_password = hashed_password
+    
     db.commit()
     db.refresh(db_user)
+    
+    db_user = db.query(UserInDB).filter(UserInDB.id_number == db_user.id_number).first()
+    user_info_complete = validate_user_info(db_user)
+    user_status = "complete" if user_info_complete else "incomplete"
+    db_user.user_status = user_status
+    db.commit()
 
     # Log the successful password change
     log_entry = LogsInDb(
@@ -737,5 +744,7 @@ async def update_password(email: str, password_change: PasswordChange, db: Sessi
     )
     db.add(log_entry)
     db.commit()
+    
+    new_token = create_access_token(db_user.username, db_user.role, str(db_user.id_number), db_user.id, user_status)
 
-    return {"message": "Tu contraseña se ha cambiado exitosamente"}
+    return {"message": "Tu contraseña se ha cambiado exitosamente", "new_token": new_token}
