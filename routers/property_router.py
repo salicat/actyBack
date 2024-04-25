@@ -279,7 +279,36 @@ def get_properties_by_status(status: str, db: Session = Depends(get_db), token: 
         processed_property_ids.add(property.matricula_id)  # Mark this property as processed
 
     if not properties_data:
-        return {"message" : "No Hay Activos Disponibles"}
+        return {"message" : "No hay Activos Disponibles"}
+
+    return properties_data
+
+#PUBLIC ENDOPOINT
+
+@router.get("/public-properties/{referralId}")
+def get_properties_by_referral(referralId: str, db: Session = Depends(get_db)):
+
+    properties = db.query(MortgageInDB).filter(MortgageInDB.mortgage_stage == 'available').all()
+
+    properties_data = []
+    for property in properties:
+        properties_data.append({
+            "id": property.id,
+            "address": property.address,
+            "city": property.city,
+            "department": property.department,
+            "area": property.area,
+            "type": property.type,
+            "tax_valuation": property.tax_valuation,
+            "loan_solicited": property.loan_solicited,
+            "rate_proposed": property.rate_proposed,
+            "prop_status": property.prop_status,
+            "comments": property.comments,
+            "property_photo": property.property_photo  # Assuming this is a direct attribute
+        })
+
+    if not properties_data:
+        return {"message": "No properties available for this referral"}
 
     return properties_data
 

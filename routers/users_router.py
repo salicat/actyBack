@@ -327,7 +327,6 @@ async def get_mi_perfil(user_info_ask: str, db: Session = Depends(get_db)):
                 # Update if it's the first profile picture or a newer one based on ID
                 if current_status is None or file.id > current_status["id"]:
                     documents_status[file.file_type] = {"uploaded": True, "path": file.file_location, "id": file.id}
-                    print(f"Updating profile picture to file with ID {file.id}")
             else:
                 # For other document types, set if not already set
                 if current_status is None:
