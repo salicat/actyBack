@@ -237,9 +237,11 @@ def get_properties_by_status(status: str, db: Session = Depends(get_db), token: 
     processed_property_ids = set()  # To track properties already added
 
     # Handling different statuses without making new imports
-    if status in ['analysis', 'available']:
+    if status == 'analysis':
         query_status = 'study' if status == 'analysis' else 'approved'
         properties = db.query(PropInDB).filter(PropInDB.study == query_status).all()
+    if status == 'available':
+        properties = db.query(PropInDB).filter(PropInDB.prop_status == 'available', PropInDB.comments == 'approved').all()
     elif status in ['selected', 'loaned']:
         property_ids = {mort.matricula_id for mort in db.query(MortgageInDB).filter(MortgageInDB.mortgage_stage == status).all()}
         properties = db.query(PropInDB).filter(PropInDB.matricula_id.in_(property_ids)).all()
@@ -288,10 +290,22 @@ def get_properties_by_status(status: str, db: Session = Depends(get_db), token: 
 @router.get("/public-properties/{referralId}")
 def get_properties_by_referral(referralId: str, db: Session = Depends(get_db)):
 
-    properties = db.query(MortgageInDB).filter(MortgageInDB.mortgage_stage == 'available').all()
-
+    properties = db.query(PropInDB).filter(
+        PropInDB.prop_status == 'available',
+        PropInDB.comments == 'approved'
+    ).all()
+    
     properties_data = []
     for property in properties:
+        property_photo = db.query(File).filter_by(
+            entity_type='property',
+            entity_id=property.id,
+            file_type='property_photo'
+        ).first()
+
+        # Ensure that property_photo is not None before accessing its attributes
+        photo_location = property_photo.file_location if property_photo else None
+
         properties_data.append({
             "id": property.id,
             "address": property.address,
@@ -304,13 +318,14 @@ def get_properties_by_referral(referralId: str, db: Session = Depends(get_db)):
             "rate_proposed": property.rate_proposed,
             "prop_status": property.prop_status,
             "comments": property.comments,
-            "property_photo": property.property_photo  # Assuming this is a direct attribute
+            "property_photo": photo_location  # Use the photo_location variable here
         })
 
     if not properties_data:
         return {"message": "No properties available for this referral"}
 
     return properties_data
+
 
 @router.get("/admin/properties/")   #LOGS #TOKEN-ROLE # posted, selected, funded, mortgage
 def get_properties_by_status(db: Session = Depends(get_db), token: str = Header(None)):
