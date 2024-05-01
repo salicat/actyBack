@@ -74,7 +74,7 @@ async def get_loan_applications(db: Session = Depends(get_db), token: str = Head
     
     elif role_from_token == "agent":
         # Modified logic for agents to retrieve applications for their users
-        subquery = (
+        subquery = ( 
             db.query(
                 LoanProgress.property_id, 
                 func.max(LoanProgress.id).label("max_id")

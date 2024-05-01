@@ -33,6 +33,16 @@ class StatusUpdate(BaseModel):
     study           : Optional[str] = None
     comments        : Optional[str] = None
 
+class PropertyUpdate(BaseModel):
+    address         : Optional[str] = None
+    neighbourhood   : Optional[str] = None
+    city            : Optional[str] = None
+    department      : Optional[str] = None
+    strate          : Optional[int] = None
+    area            : Optional[int] = None
+    type            : Optional[str] = None
+    tax_valuation   : Optional[int] = None
+    loan_solicited  : Optional[int] = None
 
     class Config:
         orm_mode = True

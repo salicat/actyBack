@@ -7,6 +7,9 @@ from passlib.context import CryptContext
 from jose import jwt
 from datetime import datetime, timedelta, timezone
 from sqlalchemy import func
+import smtplib
+from email.mime.text import MIMEText
+from email.mime.multipart import MIMEMultipart
 import json
 import os
 import shutil 
@@ -192,23 +195,18 @@ async def create_affiliate_user(
 ): 
     
     # Check if token is provided 
-    if not token:
-        raise HTTPException(status_code=401, detail="Token not provided")
-    
-    # Decode token to extract role and id 
-    decoded_token       = decode_jwt(token)
-    role_from_token     = decoded_token.get("role")
-    user_id_from_token  = decoded_token.get("id")
-    agent_id            = decoded_token.get("pk")
+    agent_id = None
+    if token:
+        decoded_token = decode_jwt(token)
+        role_from_token = decoded_token.get("role")
+        user_id_from_token = decoded_token.get("id")
+        agent_id = decoded_token.get("pk")
 
-    # Check if role is valid for creating affiliate users
-    if role_from_token.lower() not in ["admin", "agent"]:
-        raise HTTPException(status_code=403, detail="Unauthorized to create affiliate users")
-
-    # Check if role is allowed
-    allowed_roles = ["admin", "lender", "debtor", "agent"]  
-    if user_in.role.lower() not in allowed_roles:
-        raise HTTPException(status_code=400, detail="Invalid role. Allowed roles are: admin, lender, debtor, agent")
+        if role_from_token.lower() not in ["admin", "agent"]:
+            raise HTTPException(status_code=403, detail="Unauthorized to create affiliate users")
+    else:
+        # If no token, and agent_id is provided directly in the request
+        agent_id = user_in.added_by if user_in.added_by else None
 
     # Check for existing users with the same credentials
     existing_user = db.query(UserInDB).filter(UserInDB.username == user_in.username).first()
@@ -242,24 +240,73 @@ async def create_affiliate_user(
         id_number       = user_in.id_number,
         added_by        = agent_id
     )
-
-    #send email to username with email + temp_password
-    
     new_user.agent = False    
     new_user.user_status = "temp_password"    
 
     db.add(new_user)
     db.commit()
     db.refresh(new_user)
+    
+    #send email to username with email + temp_password
+    sender_email    = "no-reply@mail.app.actyvalores.com" 
+    receiver_email  = user_in.email
+    subject         = "Usuario Creado"
+    body            = "Hola, hemos creado tu usuario para Activos & Valores"
+    body_html = f"""\
+    <html>
+        <body>
+            <p>Hola,<br>
+            Se ha creado tu usuario para Activos & Valores:<br>
+            <br>
+            Ahora podrás ingresar para dar seguimiento a tus solicitudes
+            <br>
+            Puedes Ingresar en este Link
+            <a href='https://app.actyvalores.com/'>Activos & Valores</a>
+            </p>
+            <br>
+            Con la contraseña temporal: {temp_password}
+            <br>
+            Saludos
+            <br>
+            <br>
+            Equipo Desarrollo
+            <br>
+            app.actyvalores.com            
+        </body>
+    </html>
+    """
 
-    log_entry = LogsInDb(
-        action      = "User Created",
-        timestamp   = local_timestamp_str,
-        message     = f"User with username '{user_in.username}' has been registered by {role_from_token}",
-        user_id     = user_id_from_token
-    )
+
+    with smtplib.SMTP('smtp.us-west-1.mailertogo.net', 587) as server:
+        server.starttls()
+        server.login('6636bd56e8c6a235a7a093bc753e5c45', 'd1603007953379efe4c644b446bfc82be37e84a54d1a379cc518ee4f0abd2c44')
+        msg = MIMEMultipart('alternative')
+        msg['Subject'] = subject
+        msg['From'] = sender_email
+        msg['To'] = receiver_email
+        part1 = MIMEText(body, 'plain')
+        part2 = MIMEText(body_html, 'html')
+        msg.attach(part1)
+        msg.attach(part2)
+        server.sendmail(sender_email, receiver_email, msg.as_string())
+
+    if token:
+        log_entry = LogsInDb(
+            action      = "User Created",
+            timestamp   = local_timestamp_str,
+            message     = f"User with username '{user_in.username}' has been registered by {role_from_token}",
+            user_id     = user_id_from_token
+        )
+    else:
+        log_entry = LogsInDb(
+            action      = "User Created",
+            timestamp   = local_timestamp_str,
+            message     = f"User '{user_in.username}' registered under agent {agent_id}",
+            user_id     = new_user.id  # Use the newly created user's ID
+        )
     db.add(log_entry)
     db.commit()
+    
     
     return {"message": f"Has creado el usuario '{user_in.username}'",
             "temporary_password": temp_password
@@ -692,29 +739,58 @@ async def update_user_info(
 
     return {"message": "Información de usuario actualizada correctamente"}
 
-from fastapi import HTTPException
 
 @router.get("/mail_check/{email}")
 async def check_mail(email: str, db: Session = Depends(get_db)):
     email = email.lower().strip()
     user = db.query(UserInDB).filter(UserInDB.email == email).first()
 
-    # Prepare and log the entry regardless of user existence
+    # Log the attempt
     log_entry = LogsInDb(
-        action      = "Recuperacion de contraseña" if user else "ALERTA! Recuperacion de contraseña correo inexistente",
-        timestamp   = local_timestamp_str,
-        message     = f"Correo usuario: {email}",
-        user_id     = None
+        action="Recuperacion de contraseña" if user else "ALERTA! Recuperacion de contraseña correo inexistente",
+        timestamp=local_timestamp_str,  
+        message=f"Correo usuario: {email}",
+        user_id=None
     )
     db.add(log_entry)
     db.commit()
 
     if user:
-        return {"exists": True, "message": "Un correo de recuperación será enviado si la dirección está registrada con nosotros."}
+        # Email setup
+        sender_email    = "no-reply@mail.app.actyvalores.com" 
+        receiver_email  = email
+        subject         = "Recuperacion de contraseña"
+        body            = "Hola, si has solicitado recuperar tu contraseña de la APP Actyvalores, por favor has click en el link para asignar una nueva contraseña:"
+        body_html = f"""\
+        <html>
+            <body>
+                <p>Hola,<br>
+                Si has solicitado recuperar tu contraseña de la APP Actyvalores, por favor has click en el link para asignar una nueva contraseña:<br>
+                <a href='https://app.actyvalores.com/auth/action/{email}'>Reset Password</a>
+                </p>
+            </body>
+        </html>
+        """
+
+
+        with smtplib.SMTP('smtp.us-west-1.mailertogo.net', 587) as server:
+            server.starttls()
+            server.login('6636bd56e8c6a235a7a093bc753e5c45', 'd1603007953379efe4c644b446bfc82be37e84a54d1a379cc518ee4f0abd2c44')
+            msg = MIMEMultipart('alternative')
+            msg['Subject'] = subject
+            msg['From'] = sender_email
+            msg['To'] = receiver_email
+            part1 = MIMEText(body, 'plain')
+            part2 = MIMEText(body_html, 'html')
+            msg.attach(part1)
+            msg.attach(part2)
+            server.sendmail(sender_email, receiver_email, msg.as_string())
+
+        return {"exists": True, "message": "A recovery email has been sent if the address is registered with us."}
     else:
-        raise HTTPException(status_code=404, detail="No se encontró un usuario con este email.")
-
-
+        raise HTTPException(status_code=404, detail="No user found with this email.")
+    
+    
 @router.put("/update_password/{email}")
 async def update_password(email: str, password_change: PasswordChange, db: Session = Depends(get_db)):
     db_user = db.query(UserInDB).filter(UserInDB.email == email).first()

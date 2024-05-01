@@ -1,10 +1,10 @@
 from typing import Optional
-from fastapi import APIRouter, Depends, HTTPException, UploadFile, File as FastAPIFile, Form, Header
+from fastapi import APIRouter, Depends, HTTPException, UploadFile, File as FastAPIFile, Form, Header, Body
 from sqlalchemy.orm import Session
 from db.db_connection import get_db
 from db.all_db import PropInDB, UserInDB, LogsInDb, LoanProgress, MortgageInDB
 from db.all_db import File
-from models.property_models import PropCreate, StatusUpdate
+from models.property_models import PropCreate, StatusUpdate, PropertyUpdate
 from models.mortgage_models import MortgageCreate
 from datetime import datetime, timedelta, timezone
 from sqlalchemy.orm import joinedload
@@ -652,3 +652,39 @@ def select_property(property_id: int, db: Session = Depends(get_db), token: str 
     db.commit()
 
     return {"message": f"Property with ID {property_id} successfully selected by {lender.username}"}
+
+@router.put("/complete_property/{prop_matricula_id}")
+def update_prop(prop_matricula_id: str, update_data: PropertyUpdate, db: Session = Depends(get_db), token: str = Header(None)):
+    # Decode the token to validate the user
+    decoded_token = decode_jwt(token)
+    role_from_token = decoded_token.get("role")
+
+    if role_from_token is None or role_from_token != "admin":
+        raise HTTPException(status_code=403, detail="Unauthorized role or missing token information")
+
+    property = db.query(PropInDB).filter(PropInDB.matricula_id == prop_matricula_id).first()
+    if not property:
+        raise HTTPException(status_code=404, detail="Property not found")
+
+    # Explicitly update each field if provided
+    if update_data.address is not None:
+        property.address = update_data.address
+    if update_data.neighbourhood is not None:
+        property.neighbourhood = update_data.neighbourhood
+    if update_data.city is not None:
+        property.city = update_data.city
+    if update_data.department is not None:
+        property.department = update_data.department
+    if update_data.strate is not None:
+        property.strate = update_data.strate
+    if update_data.area is not None:
+        property.area = update_data.area
+    if update_data.type is not None:
+        property.type = update_data.type
+    if update_data.tax_valuation is not None:
+        property.tax_valuation = update_data.tax_valuation
+    if update_data.loan_solicited is not None:
+        property.loan_solicited = update_data.loan_solicited
+
+    db.commit()
+    return {"message": "Property updated successfully"}
