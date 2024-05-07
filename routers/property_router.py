@@ -23,6 +23,10 @@ SECRET_KEY                  = "8/8"
 ALGORITHM                   = "HS256"
 ACCESS_TOKEN_EXPIRE_MINUTES = 30
 
+AWS_ACCESS_KEY_ID = os.environ.get('AWS_ACCESS_KEY_ID')
+AWS_SECRET_ACCESS_KEY = os.environ.get('AWS_SECRET_ACCESS_KEY')
+
+
 router = APIRouter()
 
 def decode_jwt(token):
@@ -50,8 +54,8 @@ def save_file_to_s3_db(db: Session, entity_type: str, entity_id: int, file_type:
 
 s3_client = boto3.client(
     's3',
-    aws_access_key_id=AWS_ACCESS_KEY_ID,  # Ensure these are securely configured in your environment variables
-    aws_secret_access_key=AWS_SECRET_ACCESS_KEY
+    aws_access_key_id       = AWS_ACCESS_KEY_ID,
+    aws_secret_access_key   = AWS_SECRET_ACCESS_KEY
 )
 
 def upload_file_to_s3(file, bucket_name, object_name):
