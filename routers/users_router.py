@@ -15,6 +15,7 @@ import os
 import shutil 
 import random
 import string
+import secrets
 
 
 pwd_context = CryptContext(schemes=["bcrypt"], deprecated="auto")
@@ -742,20 +743,25 @@ async def update_user_info(
 
 @router.get("/mail_check/{email}")
 async def check_mail(email: str, db: Session = Depends(get_db)):
-    email = email.lower().strip()
+    email = email.lower().strip()    
     user = db.query(UserInDB).filter(UserInDB.email == email).first()
-
-    # Log the attempt
-    log_entry = LogsInDb(
-        action="Recuperacion de contraseña" if user else "ALERTA! Recuperacion de contraseña correo inexistente",
-        timestamp=local_timestamp_str,  
-        message=f"Correo usuario: {email}",
-        user_id=None
-    )
-    db.add(log_entry)
-    db.commit()
+    
+    print(user)
+    if not user:
+        
+        log_entry = LogsInDb(
+            action      = "ALERTA! Recuperacion de contraseña correo inexistente",
+            timestamp   = local_timestamp_str,
+            message     = f"Correo usuario intentado: {email}",
+            user_id     = None
+        )
+        db.add(log_entry)
+        db.commit()
+        
+        raise HTTPException(status_code=404, detail="No se encontró un usuario con este correo electrónico.")
 
     if user:
+        oob_code = secrets.token_urlsafe(64)
         # Email setup
         sender_email    = "no-reply@mail.app.actyvalores.com" 
         receiver_email  = email
@@ -766,7 +772,7 @@ async def check_mail(email: str, db: Session = Depends(get_db)):
             <body>
                 <p>Hola,<br>
                 Si has solicitado recuperar tu contraseña de la APP Actyvalores, por favor has click en el link para asignar una nueva contraseña:<br>
-                <a href='https://app.actyvalores.com/auth/action/{email}'>Reset Password</a>
+                <a href='https://app.actyvalores.com/auth/action/{email}?mode=resetPassword&oobCode={oob_code}&apiKey=AIzaSyAo1OXXBKkJ0T_HHMiW2Df-KumPJrQU94I&lang=es-419'>Reset Password</a>
                 </p>
             </body>
         </html>
@@ -787,8 +793,8 @@ async def check_mail(email: str, db: Session = Depends(get_db)):
             server.sendmail(sender_email, receiver_email, msg.as_string())
 
         return {"exists": True, "message": "A recovery email has been sent if the address is registered with us."}
-    else:
-        raise HTTPException(status_code=404, detail="No user found with this email.")
+
+        
     
     
 @router.put("/update_password/{email}")

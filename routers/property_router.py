@@ -7,7 +7,8 @@ from db.all_db import File
 from models.property_models import PropCreate, StatusUpdate, PropertyUpdate
 from models.mortgage_models import MortgageCreate
 from datetime import datetime, timedelta, timezone
-from sqlalchemy.orm import joinedload
+import boto3
+from botocore.exceptions import NoCredentialsError
 import jwt
 import os
 import shutil
@@ -35,16 +36,29 @@ def decode_jwt(token):
     except Exception as e:
         raise HTTPException(status_code=401, detail=str(e))
 
-def save_file_to_db(db: Session, entity_type: str, entity_id: int, file_type: str, file_location: str):
+def save_file_to_s3_db(db: Session, entity_type: str, entity_id: int, file_type: str, s3_key: str):
     new_file = File(
-        entity_type     = entity_type, 
-        entity_id       = entity_id, 
-        file_type       = file_type, 
-        file_location   = file_location)
-    db.add(new_file) 
+        entity_type = entity_type, 
+        entity_id = entity_id, 
+        file_type = file_type, 
+        file_location = s3_key)  # Store the S3 key instead of the local file path
+    db.add(new_file)
     db.commit()
     db.refresh(new_file)
     return new_file
+
+
+s3_client = boto3.client(
+    's3',
+    aws_access_key_id=AWS_ACCESS_KEY_ID,  # Ensure these are securely configured in your environment variables
+    aws_secret_access_key=AWS_SECRET_ACCESS_KEY
+)
+
+def upload_file_to_s3(file, bucket_name, object_name):
+    try:
+        s3_client.upload_fileobj(file, bucket_name, object_name)
+    except NoCredentialsError:
+        raise HTTPException(status_code=500, detail="AWS credentials not available")
 
 @router.post("/property/create/", response_model=PropCreate)
 async def create_property(
@@ -122,38 +136,29 @@ async def create_property(
     db.add(new_loan_progress)
     db.commit()
 
-    # Uploading files
-    upload_folder = './uploads' 
-    os.makedirs(upload_folder, exist_ok=True) 
-    
-    # Tax document
-    tax_document_filename = f"{new_property.id}_tax_{tax_document.filename}"
-    tax_document_location = f"{upload_folder}/{tax_document_filename}"
-    with open(tax_document_location, "wb") as buffer:
-        shutil.copyfileobj(tax_document.file, buffer)
-    save_file_to_db(db, "property", new_property.id, "tax_document", tax_document_location)
+    s3_bucket_name = 'actyfiles'
 
-    # Property photo
-    property_photo_filename = f"{new_property.id}_photo_{property_photo.filename}"
-    property_photo_location = f"{upload_folder}/{property_photo_filename}"
-    with open(property_photo_location, "wb") as buffer:
-        shutil.copyfileobj(property_photo.file, buffer)
-    save_file_to_db(db, "property", new_property.id, "property_photo", property_photo_location)
+    tax_document_key = f"{new_property.id}_tax_{tax_document.filename}"
+    upload_file_to_s3(tax_document.file, s3_bucket_name, tax_document_key)
+    save_file_to_s3_db(db, "property", new_property.id, "tax_document", tax_document_key)
 
-    # Property CTL
-    property_ctl_filename = f"{new_property.id}_ctl_{property_ctl.filename}"
-    property_ctl_location = f"{upload_folder}/{property_ctl_filename}"
-    with open(property_ctl_location, "wb") as buffer:
-        shutil.copyfileobj(property_ctl.file, buffer)
-    save_file_to_db(db, "property", new_property.id, "property_ctl", property_ctl_location)
+    # Upload and save file references for property_photo
+    property_photo_key = f"{new_property.id}_photo_{property_photo.filename}"
+    upload_file_to_s3(property_photo.file, s3_bucket_name, property_photo_key)
+    save_file_to_s3_db(db, "property", new_property.id, "property_photo", property_photo_key)
+
+    # Upload and save file references for property_ctl
+    property_ctl_key = f"{new_property.id}_ctl_{property_ctl.filename}"
+    upload_file_to_s3(property_ctl.file, s3_bucket_name, property_ctl_key)
+    save_file_to_s3_db(db, "property", new_property.id, "property_ctl", property_ctl_key)
+
+    # Check for application form and handle accordingly
+    if app_form:
+        app_form_key = f"{new_property.id}_appForm_{app_form.filename}"
+        upload_file_to_s3(app_form.file, s3_bucket_name, app_form_key)
+        save_file_to_s3_db(db, "property", new_property.id, "app_form", app_form_key)
     
-    #application_form
-    if app_form:    
-        app_form_filename   = f"{new_property.id}_appForm_{app_form.filename}"
-        app_form_location   =f"{upload_folder}/{app_form_filename}"
-        with open(app_form_location, "wb") as buffer:
-            shutil.copyfileobj(app_form.file, buffer)
-        save_file_to_db(db, "property", new_property.id, "app_form", app_form_location)
+
         
     log_entry = LogsInDb(
         action      = "Property Created", 
