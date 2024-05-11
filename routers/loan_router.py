@@ -4,13 +4,16 @@ from sqlalchemy.orm import Session
 from sqlalchemy.orm import aliased
 from db.db_connection import get_db
 from db.all_db import PropInDB, UserInDB, LogsInDb, LoanProgress, File 
-from models.property_models import PropCreate, StatusUpdate
-from models.loan_prog_models import LoanProgressInfo, LoanProgressUpdate
 from datetime import datetime, timedelta, timezone
 from sqlalchemy.sql import func
+import boto3
+from botocore.client import Config
+from dotenv import load_dotenv
 import jwt
+import os
 import re
  
+load_dotenv()
 
 utc_now                 = utc_now = datetime.now(timezone.utc)
 utc_offset              = timedelta(hours=-5)
@@ -20,6 +23,10 @@ local_timestamp_str     = local_now.strftime('%Y-%m-%d %H:%M:%S.%f')
 SECRET_KEY                  = "8/8"
 ALGORITHM                   = "HS256"
 ACCESS_TOKEN_EXPIRE_MINUTES = 30
+
+AWS_ACCESS_KEY_ID = os.getenv('AWS_ACCESS_KEY_ID')
+AWS_SECRET_ACCESS_KEY = os.getenv('AWS_SECRET_ACCESS_KEY')
+S3_BUCKET_NAME = os.getenv('S3_BUCKET_NAME')
 
 router = APIRouter()
 
@@ -34,6 +41,26 @@ def decode_jwt(token):
     except Exception as e:
         raise HTTPException(status_code=401, detail=str(e))
     
+#file path retrieving:
+s3_client = boto3.client(
+    's3',
+    region_name='us-east-2',  # Ensure this matches your bucket's region
+    config=Config(signature_version='s3v4')
+)
+
+AWS_REGION = os.getenv('AWS_REGION', 'us-east-2')  # Default to 'us-east-2' if not set
+
+def generate_presigned_url(bucket_name, object_name, expiration=3600):
+    s3_client = boto3.client('s3', region_name=AWS_REGION)
+    try:
+        response = s3_client.generate_presigned_url('get_object',
+                                                    Params={'Bucket': bucket_name,
+                                                            'Key': object_name},
+                                                    ExpiresIn=expiration)
+        return response
+    except Exception as e:
+        print(f"Error generating presigned URL: {str(e)}")
+        return None
 
 
 @router.get("/loan_progress/applications/")
@@ -113,7 +140,7 @@ async def get_loan_applications(db: Session = Depends(get_db), token: str = Head
     action_description = "Loan Applications Retrieved by Admin" if role_from_token == "admin" else "Loan Applications Retrieved by Agent"
     log_entry = LogsInDb(
         action      = action_description, 
-        timestamp   = datetime.now(), 
+        timestamp   = local_timestamp_str, 
         message     = f"Retrieved {len(application_data)} loan applications", 
         user_id     = user_id_from_token)
     db.add(log_entry)
@@ -126,7 +153,7 @@ async def get_loan_applications(db: Session = Depends(get_db), token: str = Head
 @router.get("/loan_app/detail/{matricula_id}")
 async def get_loan_application_details(matricula_id: str, db: Session = Depends(get_db), token: str = Header(None)):
     
-    print(f"Processed matricula_id: '{matricula_id}'")
+    print(f"Processed matricula_id: '{matricula_id}'")  # Debugging output
 
     if not token:
         raise HTTPException(status_code=401, detail="Token not provided")
@@ -135,41 +162,42 @@ async def get_loan_application_details(matricula_id: str, db: Session = Depends(
     role_from_token = decoded_token.get("role")
     user_id_from_token = decoded_token.get("id")
 
-    if role_from_token is None:
-        raise HTTPException(status_code=403, detail="Token is missing or invalid")
-
-    if role_from_token not in ["admin", "debtor", "agent"]:
+    if role_from_token is None or role_from_token not in ["admin", "debtor", "agent"]:
         raise HTTPException(status_code=403, detail="Not authorized to view loan application details")
 
+    # Normalize input for consistent matching
     normalized_input_matricula_id = ''.join(e for e in matricula_id if e.isalnum() or e in ['-']).lower()
 
-    # Retrieve all properties then filter in Python (Consider optimizing based on your actual dataset size and indexing)
+    # Retrieve all properties then filter in Python
     potential_properties = db.query(PropInDB).all()
     property_detail = next((prop for prop in potential_properties if ''.join(e for e in prop.matricula_id if e.isalnum() or e in ['-']).lower() == normalized_input_matricula_id), None)
+
     if not property_detail:
         raise HTTPException(status_code=404, detail="Property not found")
 
+    # Get loan progress entries
     loan_progress_entries = db.query(LoanProgress).filter(LoanProgress.property_id == property_detail.id).all()
+    credit_detail = [{
+        "date": entry.date,
+        "status": entry.status,
+        "notes": entry.notes, 
+        "updated_by": entry.updated_by
+    } for entry in loan_progress_entries]
 
-    credit_detail = []
+    # Debug: Check what we fetch from the database
+    print(f"Fetching documents for property_id: {property_detail.id}")
+    
+    documents = db.query(File).filter(File.entity_type == "property", File.entity_id == property_detail.id).all()
+    document_info = [{
+        "id": doc.id,
+        "file_type": doc.file_type,
+        "file_location": generate_presigned_url("actyfiles", doc.file_location) if doc.file_location else "No location found"
+    } for doc in documents]
 
-    for entry in loan_progress_entries:
-        credit_detail.append({
-            "date": entry.date,
-            "status": entry.status,
-            "notes": entry.notes, 
-            "updated_by": entry.updated_by
-        })
-        
-    documents = (
-                db.query(File)
-                .filter(File.entity_type == "property", File.entity_id == property_detail.id)
-                .all()
-            )
+    print(f"Document info: {document_info}")  # Check the output immediately
 
-    property_info = []
-
-    property_info.append({
+    # Compile property details
+    property_info = {
         "owner_id": property_detail.owner_id,
         "matricula_id": property_detail.matricula_id,
         "address": property_detail.address,
@@ -181,38 +209,22 @@ async def get_loan_application_details(matricula_id: str, db: Session = Depends(
         "type": property_detail.type,
         "tax_valuation": property_detail.tax_valuation,
         "loan_solicited": property_detail.loan_solicited,
-        "rate_proposed": property_detail.rate_proposed,
-        "evaluation": property_detail.evaluation,
-        "prop_status": property_detail.prop_status,
+        "study": property_detail.study,
         "comments": property_detail.comments,
-        "documents"     : [
-                    {
-                        "id"            : doc.id,
-                        "file_type"     : doc.file_type,
-                        "file_location" : doc.file_location 
-                    }
-                    for doc in documents
-                ]
-    })
-    user_credentials = []
+        "documents": document_info
+    }
+
+    # Fetch owner information
     owner = db.query(UserInDB).filter(UserInDB.id_number == property_detail.owner_id).first()
-
-    if owner:
-        user_credentials.append({
-            "user"  : owner.email,
-            "pass"  : owner.id_number
-        })
-
-
-    # Log the action after successful retrieval
-    log_entry = LogsInDb(action="Loan Application Detail Retrieved", timestamp=datetime.now(), message=f"Retrieved loan application details for matricula_id: {matricula_id}", user_id=user_id_from_token)
-    db.add(log_entry)
-    db.commit()
+    owner_info = {
+        "user": owner.email,
+        "pass": owner.id_number
+    } if owner else {}
 
     return {
         "credit_detail": credit_detail,
-        "property_detail": property_info,
-        "owner_info" : user_credentials
+        "property_detail": [property_info],
+        "owner_info": [owner_info] if owner_info else []
     }
 
 

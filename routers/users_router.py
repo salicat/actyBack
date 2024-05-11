@@ -8,15 +8,16 @@ from jose import jwt
 from datetime import datetime, timedelta, timezone
 from sqlalchemy import func
 import smtplib
+from smtplib import SMTP
+from dotenv import load_dotenv
 from email.mime.text import MIMEText
 from email.mime.multipart import MIMEMultipart
-import json
+import json 
 import os
 import shutil 
 import random
 import string
 import secrets
-
 
 pwd_context = CryptContext(schemes=["bcrypt"], deprecated="auto")
 
@@ -28,6 +29,15 @@ local_timestamp_str     = local_now.strftime('%Y-%m-%d %H:%M:%S.%f')
 SECRET_KEY                  = "8/8"
 ALGORITHM                   = "HS256"
 ACCESS_TOKEN_EXPIRE_MINUTES = 30
+
+load_dotenv()
+
+smtp_host = os.getenv('MAILERTOGO_SMTP_HOST')
+smtp_user = os.getenv('MAILERTOGO_SMTP_USER')
+smtp_password = os.getenv('MAILERTOGO_SMTP_PASSWORD')
+server = SMTP(smtp_host, 587)  
+server.starttls() 
+server.login(smtp_user, smtp_password)
 
 router = APIRouter()
 
@@ -255,41 +265,55 @@ async def create_affiliate_user(
     body            = "Hola, hemos creado tu usuario para Activos & Valores"
     body_html = f"""\
     <html>
-        <body>
-            <p>Hola,<br>
-            Se ha creado tu usuario para Activos & Valores:<br>
-            <br>
-            Ahora podrás ingresar para dar seguimiento a tus solicitudes
-            <br>
-            Puedes Ingresar en este Link
-            <a href='https://app.actyvalores.com/'>Activos & Valores</a>
+    <head>
+        <style>
+            body {{ font-family: Arial, sans-serif; margin: 0; padding: 20px; color: #333; }}
+            .content {{ background-color: #f4f4f4; padding: 20px; border-radius: 10px; }}
+            .footer {{ padding-top: 20px; color: #666; }}
+            a {{ color: #0073AA; text-decoration: none; }}
+            a:hover {{ text-decoration: underline; }}
+            .button-link {{ 
+                padding: 10px 20px; 
+                background-color: #0A8CBF; 
+                color: white; 
+                border-radius: 5px; 
+                text-align: center; 
+                display: inline-block;
+            }}
+        </style>
+    </head>
+    <body>
+        <div class="content">
+            <h1>Bienvenido a Activos & Valores</h1>
+            <p>Hola,</p>
+            <p>Se ha creado tu usuario para Activos & Valores. Ahora podrás ingresar para dar seguimiento a tus solicitudes. Por favor, accede al sistema usando el siguiente enlace:</p>
+            <p style="text-align: center;">
+                <a href='https://app.actyvalores.com/' class="button-link">Acceder a Activos & Valores</a>
             </p>
-            <br>
-            Con la contraseña temporal: {temp_password}
-            <br>
-            Saludos
-            <br>
-            <br>
-            Equipo Desarrollo
-            <br>
-            app.actyvalores.com            
-        </body>
+            <p>Utiliza la siguiente contraseña temporal para ingresar: <strong>{temp_password}</strong></p>
+            <p>Te recomendamos cambiar tu contraseña después de iniciar sesión por primera vez.</p>
+        </div>
+        <div class="footer">
+            <p>Saludos,<br>Equipo de Desarrollo<br>app.actyvalores.com</p>
+        </div>
+    </body>
     </html>
+
     """
 
 
-    with smtplib.SMTP('smtp.us-west-1.mailertogo.net', 587) as server:
-        server.starttls()
-        server.login('6636bd56e8c6a235a7a093bc753e5c45', 'd1603007953379efe4c644b446bfc82be37e84a54d1a379cc518ee4f0abd2c44')
-        msg = MIMEMultipart('alternative')
-        msg['Subject'] = subject
-        msg['From'] = sender_email
-        msg['To'] = receiver_email
-        part1 = MIMEText(body, 'plain')
-        part2 = MIMEText(body_html, 'html')
-        msg.attach(part1)
-        msg.attach(part2)
-        server.sendmail(sender_email, receiver_email, msg.as_string())
+    with smtplib.SMTP(smtp_host, 587) as server:
+            server.starttls()
+            server.login(smtp_user, smtp_password) 
+            msg = MIMEMultipart('alternative')
+            msg['Subject'] = subject
+            msg['From'] = sender_email
+            msg['To'] = receiver_email
+            part1 = MIMEText(body, 'plain')
+            part2 = MIMEText(body_html, 'html')
+            msg.attach(part1)
+            msg.attach(part2)
+            server.sendmail(sender_email, receiver_email, msg.as_string())
 
     if token:
         log_entry = LogsInDb(
@@ -746,7 +770,6 @@ async def check_mail(email: str, db: Session = Depends(get_db)):
     email = email.lower().strip()    
     user = db.query(UserInDB).filter(UserInDB.email == email).first()
     
-    print(user)
     if not user:
         
         log_entry = LogsInDb(
@@ -769,19 +792,36 @@ async def check_mail(email: str, db: Session = Depends(get_db)):
         body            = "Hola, si has solicitado recuperar tu contraseña de la APP Actyvalores, por favor has click en el link para asignar una nueva contraseña:"
         body_html = f"""\
         <html>
-            <body>
-                <p>Hola,<br>
-                Si has solicitado recuperar tu contraseña de la APP Actyvalores, por favor has click en el link para asignar una nueva contraseña:<br>
-                <a href='https://app.actyvalores.com/auth/action/{email}?mode=resetPassword&oobCode={oob_code}&apiKey=AIzaSyAo1OXXBKkJ0T_HHMiW2Df-KumPJrQU94I&lang=es-419'>Reset Password</a>
+        <head>
+            <style>
+                body {{ font-family: Arial, sans-serif; margin: 0; padding: 20px; color: #333; }}
+                .content {{ background-color: #f4f4f4; padding: 20px; border-radius: 10px; }}
+                .footer {{ padding-top: 20px; font-size: 12px; color: #666; }}
+                a {{ color: #0073AA; text-decoration: none; }}
+                a:hover {{ text-decoration: underline; }}
+            </style>
+        </head>
+        <body>
+            <div class="content">
+                <h1>Recuperación de Contraseña</h1>
+                <p>Hola,</p>
+                <p>Si has solicitado recuperar tu contraseña de la APP Actyvalores, por favor haz click en el siguiente botón para asignar una nueva contraseña:</p>
+                <p style="text-align: center;">
+                    <a href='https://app.actyvalores.com/auth/action/{email}?mode=resetPassword&oobCode={oob_code}&apiKey=AIzaSyAo1OXXBKkJ0T_HHMiW2Df-KumPJrQU94I&lang=es-419' style='padding: 10px 20px; background-color: #0A8CBF; color: white; border-radius: 5px; text-align: center; display: inline-block;'>Restablecer Contraseña</a>
                 </p>
-            </body>
+            </div>
+            <div class="footer">
+                <p>Si no has solicitado este cambio, por favor ignora este mensaje.</p>
+                <p>Saludos,<br>Equipo de Desarrollo</p>
+                <p>app.actyvalores.com</p>
+            </div>
+        </body>
         </html>
         """
 
-
-        with smtplib.SMTP('smtp.us-west-1.mailertogo.net', 587) as server:
+        with smtplib.SMTP(smtp_host, 587) as server:
             server.starttls()
-            server.login('6636bd56e8c6a235a7a093bc753e5c45', 'd1603007953379efe4c644b446bfc82be37e84a54d1a379cc518ee4f0abd2c44')
+            server.login(smtp_user, smtp_password) 
             msg = MIMEMultipart('alternative')
             msg['Subject'] = subject
             msg['From'] = sender_email
@@ -793,8 +833,6 @@ async def check_mail(email: str, db: Session = Depends(get_db)):
             server.sendmail(sender_email, receiver_email, msg.as_string())
 
         return {"exists": True, "message": "A recovery email has been sent if the address is registered with us."}
-
-        
     
     
 @router.put("/update_password/{email}")
