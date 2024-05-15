@@ -12,6 +12,8 @@ from smtplib import SMTP
 from dotenv import load_dotenv
 from email.mime.text import MIMEText
 from email.mime.multipart import MIMEMultipart
+import boto3
+from botocore.config import Config
 import json 
 import os
 import shutil 
@@ -37,7 +39,56 @@ smtp_user = os.getenv('MAILERTOGO_SMTP_USER')
 smtp_password = os.getenv('MAILERTOGO_SMTP_PASSWORD')
 server = SMTP(smtp_host, 587)  
 server.starttls() 
-server.login(smtp_user, smtp_password)
+server.login(smtp_user, smtp_password) 
+
+AWS_ACCESS_KEY_ID = os.getenv('AWS_ACCESS_KEY_ID')
+AWS_SECRET_ACCESS_KEY = os.getenv('AWS_SECRET_ACCESS_KEY')
+S3_BUCKET_NAME = 'actyfiles'
+
+my_config = Config(
+    region_name='us-east-2',  # Change to your bucket's region
+    signature_version='s3v4'
+)
+
+s3_client = boto3.client(
+    's3',
+    region_name='us-east-2',  # Change to the actual region of your S3 bucket
+    config=Config(signature_version='s3v4'),
+    aws_access_key_id=AWS_ACCESS_KEY_ID,
+    aws_secret_access_key=AWS_SECRET_ACCESS_KEY
+)
+
+def save_file_to_s3_db(db: Session, entity_type: str, entity_id: int, file_type: str, s3_key: str):
+    new_file = File(
+        entity_type = entity_type, 
+        entity_id = entity_id, 
+        file_type = file_type, 
+        file_location = s3_key)  # Store the S3 key instead of the local file path
+    db.add(new_file)
+    db.commit()
+    db.refresh(new_file)
+    return new_file
+
+def upload_file_to_s3(file, bucket_name, object_name):
+    try:
+        s3_client.upload_fileobj(file, bucket_name, object_name)
+        print(f"Upload successful: {object_name}")
+        return True
+    except Exception as e:
+        print(f"Failed to upload {object_name}: {str(e)}")
+        return False
+    
+def generate_presigned_url(object_name, expiration=3600):
+    """Generate a presigned URL to share an S3 object."""
+    try:
+        response = s3_client.generate_presigned_url('get_object',
+                                                    Params={'Bucket': S3_BUCKET_NAME,
+                                                            'Key': object_name},
+                                                    ExpiresIn=expiration)
+    except Exception as e:
+        print(f"Error generating presigned URL: {str(e)}")
+        return None
+    return response
 
 router = APIRouter()
 
@@ -381,49 +432,45 @@ async def get_mi_perfil(user_info_ask: str, db: Session = Depends(get_db)):
     if not user_info:
         raise HTTPException(status_code=404, detail="El usuario no existe")
     
-    user_files = db.query(File).filter(File.entity_id == user_info.id).all()  # Assuming 'entity_id' references 'UserInDB.id'
+    user_files = db.query(File).filter(File.entity_id == user_info.id).all()
     documents_status = {
         "cedula_front": None,
         "cedula_back": None,
         "tax_id_file": None,
         "bank_certification": None,
-        "profile_picture" : None
+        "profile_picture": None
     }
 
-    # Update to check file existence and include path
+    # Generate presigned URLs for each file
     for file in user_files:
         if file.file_type in documents_status:
-            # Set or update the document status, checking for the most recent profile picture
-            current_status = documents_status[file.file_type]
-            if file.file_type == "profile_picture":
-                # Update if it's the first profile picture or a newer one based on ID
-                if current_status is None or file.id > current_status["id"]:
-                    documents_status[file.file_type] = {"uploaded": True, "path": file.file_location, "id": file.id}
-            else:
-                # For other document types, set if not already set
-                if current_status is None:
-                    documents_status[file.file_type] = {"uploaded": True, "path": file.file_location}
+            presigned_url = generate_presigned_url(file.file_location, expiration=3600)
+            documents_status[file.file_type] = {
+                "uploaded": presigned_url is not None,
+                "path": presigned_url
+            }
 
     user_info_dict = {
-        "username"          : user_info.username,
-        "email"             : user_info.email,
-        "phone"             : user_info.phone,
-        "legal_address"     : user_info.legal_address,
-        "user_city"         : user_info.user_city,
-        "user_department"   : user_info.user_department,
-        "id_number"         : user_info.id_number,
-        "tax_id"            : user_info.tax_id,
-        "bank_name"         : user_info.bank_name,
-        "account_type"      : user_info.account_type,
-        "account_number"    : user_info.account_number,
+        "username"         : user_info.username,
+        "email"            : user_info.email,
+        "phone"            : user_info.phone,
+        "legal_address"    : user_info.legal_address,
+        "user_city"        : user_info.user_city,
+        "user_department"  : user_info.user_department,
+        "id_number"        : user_info.id_number,
+        "tax_id"           : user_info.tax_id,
+        "bank_name"        : user_info.bank_name,
+        "account_type"     : user_info.account_type,
+        "account_number"   : user_info.account_number,
         "documents": [
-            {"name": "Cedula cara frontal", "key": "cedula_front", "uploaded": documents_status["cedula_front"] != None, "path": documents_status["cedula_front"]["path"] if documents_status["cedula_front"] else None},
-            {"name": "Cedula cara posterior", "key": "cedula_back", "uploaded": documents_status["cedula_back"] != None, "path": documents_status["cedula_back"]["path"] if documents_status["cedula_back"] else None},
-            {"name": "Rut", "key": "tax_id_file", "uploaded": documents_status["tax_id_file"] != None, "path": documents_status["tax_id_file"]["path"] if documents_status["tax_id_file"] else None},
-            {"name": "Certificacion bancaria", "key": "bank_certification", "uploaded": documents_status["bank_certification"] != None, "path": documents_status["bank_certification"]["path"] if documents_status["bank_certification"] else None},
-            {"name": "Foto de Perfil", "key": "profile_picture", "uploaded": documents_status["profile_picture"] !=None, "path": documents_status["profile_picture"]["path"] if documents_status["profile_picture"] else None}             
-            ]
-        }
+            {"name": "Cedula cara frontal", "key": "cedula_front", "uploaded": documents_status["cedula_front"] is not None, "path": documents_status["cedula_front"]["path"] if documents_status["cedula_front"] else None},
+            {"name": "Cedula cara posterior", "key": "cedula_back", "uploaded": documents_status["cedula_back"] is not None, "path": documents_status["cedula_back"]["path"] if documents_status["cedula_back"] else None},
+            {"name": "Rut", "key": "tax_id_file", "uploaded": documents_status["tax_id_file"] is not None, "path": documents_status["tax_id_file"]["path"] if documents_status["tax_id_file"] else None},
+            {"name": "Certificacion bancaria", "key": "bank_certification", "uploaded": documents_status["bank_certification"] is not None, "path": documents_status["bank_certification"]["path"] if documents_status["bank_certification"] else None},
+            {"name": "Foto de Perfil", "key": "profile_picture", "uploaded": documents_status["profile_picture"] is not None, "path": documents_status["profile_picture"]["path"] if documents_status["profile_picture"] else None}
+        ]
+    }
+
     return user_info_dict
 
 
@@ -726,9 +773,6 @@ async def update_user_info(
     user.bank_name      = data.get('bank_name', user.bank_name)
     user.tax_id         = data.get('tax_id', user.tax_id)
 
-    upload_folder = './uploads'
-    os.makedirs(upload_folder, exist_ok=True)
-
     # Process and save files
     files = {
         "tax_id_file"       : tax_id_file,
@@ -737,15 +781,17 @@ async def update_user_info(
         "bank_certification": bank_certification,
         "profile_picture"   : profile_picture
     }
+    s3_bucket_name = 'actyfiles'
     for file_key, file in files.items():
         if file:
-            timestamp = local_timestamp_str
-            _, file_ext = os.path.splitext(file.filename)
-            file_name = f"{id_number}_{file_key}_{timestamp}{file_ext}"
-            file_path = os.path.join(upload_folder, file_name)
-            with open(file_path, "wb") as buffer:
-                shutil.copyfileobj(file.file, buffer)
-            save_file_to_db(db, "user", user.id, file_key, file_path)
+            object_name = f"{id_number}_{file_key}_{file.filename}"  # Simple key without folder paths
+            try:
+                s3_client.upload_fileobj(file.file, s3_bucket_name, object_name)
+                # Save the reference in the database if necessary
+                save_file_to_s3_db(db, "user", user.id, file_key, object_name)
+            except Exception as e:
+                print(f"Failed to upload {file.filename}: {str(e)}")
+                raise HTTPException(status_code=500, detail=f"Failed to upload {file.filename}")
 
     log_entry = LogsInDb(
         action      = "User Information Updated",

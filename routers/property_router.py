@@ -8,6 +8,7 @@ from models.property_models import PropCreate, StatusUpdate, PropertyUpdate
 from models.mortgage_models import MortgageCreate
 from datetime import datetime, timedelta, timezone
 import boto3
+from botocore.config import Config
 from dotenv import load_dotenv
 from botocore.exceptions import NoCredentialsError
 import jwt
@@ -29,7 +30,7 @@ ACCESS_TOKEN_EXPIRE_MINUTES = 30
 
 AWS_ACCESS_KEY_ID = os.getenv('AWS_ACCESS_KEY_ID')
 AWS_SECRET_ACCESS_KEY = os.getenv('AWS_SECRET_ACCESS_KEY')
-S3_BUCKET_NAME = os.getenv('S3_BUCKET_NAME')
+S3_BUCKET_NAME = 'actyfiles'
 
 
 router = APIRouter()
@@ -45,12 +46,30 @@ def decode_jwt(token):
     except Exception as e:
         raise HTTPException(status_code=401, detail=str(e))
 
-#For file saving
+my_config = Config(
+    region_name='us-east-2',  # Change to your bucket's region
+    signature_version='s3v4'
+)
+
 s3_client = boto3.client(
     's3',
-    aws_access_key_id       = AWS_ACCESS_KEY_ID,
-    aws_secret_access_key   = AWS_SECRET_ACCESS_KEY
+    region_name='us-east-2',  # Change to the actual region of your S3 bucket
+    config=Config(signature_version='s3v4'),
+    aws_access_key_id=AWS_ACCESS_KEY_ID,
+    aws_secret_access_key=AWS_SECRET_ACCESS_KEY
 )
+
+#For file saving
+def save_file_to_s3_db(db: Session, entity_type: str, entity_id: int, file_type: str, s3_key: str):
+    new_file = File(
+        entity_type = entity_type, 
+        entity_id = entity_id, 
+        file_type = file_type, 
+        file_location = s3_key)  # Store the S3 key instead of the local file path
+    db.add(new_file)
+    db.commit()
+    db.refresh(new_file)
+    return new_file
 
 def upload_file_to_s3(file, bucket_name, object_name):
     try:
@@ -77,100 +96,89 @@ def generate_presigned_url(object_name, expiration=3600):
 
 @router.post("/property/create/", response_model=PropCreate)
 async def create_property(
-    tax_document    : UploadFile    = FastAPIFile(...), 
-    property_photo  : UploadFile    = FastAPIFile(...),
-    property_ctl    : UploadFile    = FastAPIFile(...), 
-    app_form        : Optional[UploadFile] = FastAPIFile(None),
-    property_data   : str           = Form(...),
-    db              : Session       = Depends(get_db), 
-    token           : str           = Header(None)
+    tax_document: UploadFile = FastAPIFile(...), 
+    property_photo: UploadFile = FastAPIFile(...),
+    property_ctl: UploadFile = FastAPIFile(...), 
+    app_form: Optional[UploadFile] = FastAPIFile(None),
+    property_data: str = Form(...),
+    db: Session = Depends(get_db), 
+    token: str = Header(None)
 ):
+    # Load property data from form
+    property_data = json.loads(property_data)
+
+    # Token validation
     if not token:
         raise HTTPException(status_code=401, detail="Token not provided")
-
     decoded_token = decode_jwt(token)
     role_from_token = decoded_token.get("role")
     user_id_from_token = decoded_token.get("id")
-
     if role_from_token is None or role_from_token not in ["admin", "debtor", "agent"]:
-        raise HTTPException(status_code=403, detail="Unauthorized or insufficient permissions")
+        raise HTTPException(status_code=403, detail="No tienes permiso para crear propiedades")
 
-    property_data = json.loads(property_data)
-    matricula_id = property_data['matricula_id']
-    if db.query(PropInDB).filter(PropInDB.matricula_id == matricula_id).first():
+    if db.query(PropInDB).filter(PropInDB.matricula_id == property_data['matricula_id']).first():
         raise HTTPException(status_code=400, detail="Property with this matricula_id already exists")
 
-    new_property = PropInDB(**property_data)
-    new_property.study          = "study" 
-    new_property.comments       = "received" 
-    db.add(new_property)
-    db.commit()
-    db.refresh(new_property) 
+    # S3 bucket for file storage
+    s3_bucket_name = 'actyfiles'
+    file_keys = {}
+    files = {
+        'tax_document': tax_document,
+        'property_photo': property_photo,
+        'property_ctl': property_ctl,
+        'app_form': app_form
+    }
 
+    # Upload files and gather keys
+    for file_type, file in files.items():
+        if file:
+            file_key = f"{property_data['matricula_id']}_{file_type}_{file.filename}"
+            if not upload_file_to_s3(file.file, s3_bucket_name, file_key):
+                raise HTTPException(status_code=500, detail=f"Failed to upload {file.filename}")
+            file_keys[file_type] = file_key
+
+    # Create property and loan progress in the database
     try:
-        s3_bucket_name = S3_BUCKET_NAME
-        all_uploads_successful = True
-        file_data = []
+        new_property = PropInDB(**property_data, study="study", comments="received")
+        db.add(new_property)
+        db.flush()  # Get new_property.id without committing transaction
 
-        files = {
-            'tax_document': tax_document,
-            'property_photo': property_photo,
-            'property_ctl': property_ctl,
-            'app_form': app_form
-        }
+        # Save file references in the database
+        for file_type, file_key in file_keys.items():
+            save_file_to_s3_db(db, "property", new_property.id, file_type, file_key)
 
-        # Prepare file keys and upload files
-        for file_type, file in files.items():
-            if file:
-                object_name = f"{new_property.id}_{file_type}_{file.filename}"
-                if upload_file_to_s3(file.file, s3_bucket_name, object_name):
-                    file_data.append({
-                        'entity_type': 'property',
-                        'entity_id': new_property.id,
-                        'file_type': file_type,
-                        'file_location': object_name
-                    })
-                else:
-                    all_uploads_successful = False
-                    break
+        new_loan_progress = LoanProgress(
+            property_id=new_property.id,
+            date=local_timestamp_str,
+            status="study",
+            user_id=user_id_from_token,
+            notes=f"Solicitud de crédito iniciada por {role_from_token}",
+            updated_by=user_id_from_token
+        )
+        db.add(new_loan_progress)
 
-        if all_uploads_successful:
-            new_loan_progress = LoanProgress(
-                property_id=new_property.id,
-                date=local_timestamp_str,
-                status="study",
-                user_id=user_id_from_token,
-                notes=f"Solicitud de crédito iniciada por {role_from_token}",
-                updated_by=user_id_from_token
-            )
-            db.add(new_loan_progress)
-            for file_record in file_data:
-                db.add(File(**file_record))
-            db.commit()
-        else:
-            db.rollback()
-            raise HTTPException(status_code=500, detail="Failed to upload one or more files; transaction aborted.")
-
+        db.commit()
     except Exception as e:
         db.rollback()
         raise HTTPException(status_code=500, detail=f"Transaction failed: {str(e)}")
 
-    return {
-        "owner_id": new_property.owner_id,
-        "matricula_id": new_property.matricula_id,
-        "address": new_property.address,
-        "neighbourhood": new_property.neighbourhood,
-        "city": new_property.city,
-        "department": new_property.department,
-        "strate": new_property.strate, 
-        "area": new_property.area,
-        "type": new_property.type,
-        "tax_valuation": new_property.tax_valuation,
-        "loan_solicited": new_property.loan_solicited,
-        "study": new_property.study,
-        "comments": new_property.comments
-    }
 
+    return {
+        "owner_id"      : new_property.owner_id,
+        "matricula_id"  : new_property.matricula_id,
+        "address"       : new_property.address,
+        "neighbourhood" : new_property.neighbourhood,
+        "city"          : new_property.city,
+        "department"    : new_property.department,
+        "strate"        : new_property.strate, 
+        "area"          : new_property.area,
+        "type"          : new_property.type,
+        "tax_valuation" : new_property.tax_valuation,
+        "loan_solicited": new_property.loan_solicited,
+        "study"         : new_property.study,
+        "comments"      : new_property.comments
+    }
+    
     
 @router.get("/property/retrieve/")
 def retrieve_property(id_number: str, db: Session = Depends(get_db)):
@@ -243,9 +251,11 @@ def get_properties_by_status(status: str, db: Session = Depends(get_db), token: 
         if property.matricula_id in processed_property_ids:
             continue  # Skip this property as it has already been processed
 
-        property_photo = db.query(File).filter_by(entity_type='property', entity_id=property.id, file_type='property_photo').first()
         owner_details = db.query(UserInDB.username, UserInDB.score).filter(UserInDB.id_number == property.owner_id).first()
 
+        property_photo = db.query(File).filter_by(entity_type='property', entity_id=property.id, file_type='property_photo').first()
+        property_photo_url = generate_presigned_url(property_photo.file_location) if property_photo else None
+        
         property_data = {
             "id": property.id,
             "matricula_id": property.matricula_id,
@@ -263,7 +273,7 @@ def get_properties_by_status(status: str, db: Session = Depends(get_db), token: 
             "prop_status": property.prop_status,
             "prop_study": property.study,
             "comments": property.comments,
-            "property_photo": property_photo.file_location if property_photo else None,
+            "property_photo": property_photo_url,
             "owner_username": owner_details.username if owner_details else None,
             "owner_score": owner_details.score if owner_details else None
         }

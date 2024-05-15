@@ -5,12 +5,75 @@ from db.db_connection import get_db
 from db.all_db import MortgageInDB, UserInDB, PropInDB, RegsInDb, File, LogsInDb, LoanProgress
 from models.mortgage_models import MortgageCreate, MortStage
 from datetime import timedelta, date, datetime, timezone
+from smtplib import SMTP
+from dotenv import load_dotenv
+import boto3
+from botocore.config import Config
 import jwt
+import os
 
 utc_now = datetime.now(timezone.utc)
 utc_offset = timedelta(hours=-5)
 local_now = utc_now + utc_offset
 local_timestamp_str = local_now.strftime('%Y-%m-%d %H:%M:%S.%f')
+
+load_dotenv()
+
+smtp_host = os.getenv('MAILERTOGO_SMTP_HOST')
+smtp_user = os.getenv('MAILERTOGO_SMTP_USER')
+smtp_password = os.getenv('MAILERTOGO_SMTP_PASSWORD')
+server = SMTP(smtp_host, 587)  
+server.starttls() 
+server.login(smtp_user, smtp_password) 
+
+AWS_ACCESS_KEY_ID = os.getenv('AWS_ACCESS_KEY_ID')
+AWS_SECRET_ACCESS_KEY = os.getenv('AWS_SECRET_ACCESS_KEY')
+S3_BUCKET_NAME = 'actyfiles'
+
+my_config = Config(
+    region_name='us-east-2',  # Change to your bucket's region
+    signature_version='s3v4'
+)
+
+s3_client = boto3.client(
+    's3',
+    region_name='us-east-2',  # Change to the actual region of your S3 bucket
+    config=Config(signature_version='s3v4'),
+    aws_access_key_id=AWS_ACCESS_KEY_ID,
+    aws_secret_access_key=AWS_SECRET_ACCESS_KEY
+)
+
+def save_file_to_s3_db(db: Session, entity_type: str, entity_id: int, file_type: str, s3_key: str):
+    new_file = File(
+        entity_type = entity_type, 
+        entity_id = entity_id, 
+        file_type = file_type, 
+        file_location = s3_key)  # Store the S3 key instead of the local file path
+    db.add(new_file)
+    db.commit()
+    db.refresh(new_file)
+    return new_file
+
+def upload_file_to_s3(file, bucket_name, object_name):
+    try:
+        s3_client.upload_fileobj(file, bucket_name, object_name)
+        print(f"Upload successful: {object_name}")
+        return True
+    except Exception as e:
+        print(f"Failed to upload {object_name}: {str(e)}")
+        return False
+    
+def generate_presigned_url(object_name, expiration=3600):
+    """Generate a presigned URL to share an S3 object."""
+    try:
+        response = s3_client.generate_presigned_url('get_object',
+                                                    Params={'Bucket': S3_BUCKET_NAME,
+                                                            'Key': object_name},
+                                                    ExpiresIn=expiration)
+    except Exception as e:
+        print(f"Error generating presigned URL: {str(e)}")
+        return None
+    return response
 
 router = APIRouter()
 
@@ -440,16 +503,19 @@ async def gestion_hipotecas(property_id: int, db: Session = Depends(get_db), tok
 
     def property_info_with_documents(property):
         prop_files = db.query(File).filter(File.entity_id == property.id).all()
-        documents_status = {
-            "property_photo": None,
-            "tax_document": None,
-            "certi_libertad": None,
-            "paz_y_salvo": None,
+        documents_dict = {
+            "property_photo": {"name": "Foto del inmueble", "key": "property_photo", "uploaded": False, "path": None},
+            "tax_document": {"name": "Documento de impuestos", "key": "tax_document", "uploaded": False, "path": None},
+            "certi_libertad": {"name": "Certificado de libertad", "key": "certi_libertad", "uploaded": False, "path": None},
+            "paz_y_salvo": {"name": "Paz y salvo", "key": "paz_y_salvo", "uploaded": False, "path": None},
         }
+
         for file in prop_files:
-            if file.file_type in documents_status:
-                documents_status[file.file_type] = {"uploaded": True, "path": file.file_location}
-        
+            if file.file_type in documents_dict:
+                presigned_url = generate_presigned_url(file.file_location) if file.file_location else None
+                documents_dict[file.file_type]['uploaded'] = True if presigned_url else False
+                documents_dict[file.file_type]['path'] = presigned_url
+
         return {
             "matricula_id": property.matricula_id,
             "address": property.address,
@@ -464,47 +530,41 @@ async def gestion_hipotecas(property_id: int, db: Session = Depends(get_db), tok
             "rate_proposed": property.rate_proposed,
             "evaluation": property.evaluation,
             "prop_status": property.prop_status,
-            "documents": [
-                {"name": "Foto del inmueble", "key": "property_photo", "uploaded": documents_status["property_photo"] is not None, "path": documents_status["property_photo"]["path"] if documents_status["property_photo"] else None},
-                {"name": "Documento de impuestos", "key": "tax_document", "uploaded": documents_status["tax_document"] is not None, "path": documents_status["tax_document"]["path"] if documents_status["tax_document"] else None},
-                {"name": "Certificado de libertad", "key": "certi_libertad", "uploaded": documents_status["certi_libertad"] is not None, "path": documents_status["certi_libertad"]["path"] if documents_status["certi_libertad"] else None},
-                {"name": "Paz y salvo", "key": "paz_y_salvo", "uploaded": documents_status["paz_y_salvo"] is not None, "path": documents_status["paz_y_salvo"]["path"] if documents_status["paz_y_salvo"] else None},
-            ]
+            "documents": documents_dict
         }
 
     def user_info_with_documents(user):
         user_files = db.query(File).filter(File.entity_id == user.id).all()
-        documents_status = {
-            "cedula_front": None,
-            "cedula_back": None,
-            "tax_id_file": None,
-            "bank_certification": None,
+        documents_dict = {
+            "cedula_front": {"name": "Cedula cara frontal", "key": "cedula_front", "uploaded": False, "path": None},
+            "cedula_back": {"name": "Cedula cara posterior", "key": "cedula_back", "uploaded": False, "path": None},
+            "tax_id_file": {"name": "Rut", "key": "tax_id_file", "uploaded": False, "path": None},
+            "bank_certification": {"name": "Certificacion bancaria", "key": "bank_certification", "uploaded": False, "path": None},
         }
 
         for file in user_files:
-            if file.file_type in documents_status:
-                documents_status[file.file_type] = {"uploaded": True, "path": file.file_location}
+            if file.file_type in documents_dict:
+                presigned_url = generate_presigned_url(file.file_location) if file.file_location else None
+                documents_dict[file.file_type]['uploaded'] = True if presigned_url else False
+                documents_dict[file.file_type]['path'] = presigned_url
 
         return {
-            "username"          : user.username,
-            "email"             : user.email,
-            "phone"             : user.phone,
-            "agente"            : user.added_by, 
-            "legal_address"     : user.legal_address,
-            "user_city"         : user.user_city,
-            "user_department"   : user.user_department,
-            "id_number"         : user.id_number,
-            "tax_id"            : user.tax_id,
-            "bank_name"         : user.bank_name,
-            "account_type"      : user.account_type,
-            "account_number"    : user.account_number,
-            "documents": [
-                {"name": "Cedula cara frontal", "key": "cedula_front", "uploaded": documents_status["cedula_front"] is not None, "path": documents_status["cedula_front"]["path"] if documents_status["cedula_front"] else None},
-                {"name": "Cedula cara posterior", "key": "cedula_back", "uploaded": documents_status["cedula_back"] is not None, "path": documents_status["cedula_back"]["path"] if documents_status["cedula_back"] else None},
-                {"name": "Rut", "key": "tax_id_file", "uploaded": documents_status["tax_id_file"] is not None, "path": documents_status["tax_id_file"]["path"] if documents_status["tax_id_file"] else None},
-                {"name": "Certificacion bancaria", "key": "bank_certification", "uploaded": documents_status["bank_certification"] is not None, "path": documents_status["bank_certification"]["path"] if documents_status["bank_certification"] else None},
-            ]
+            "username": user.username,
+            "email": user.email,
+            "phone": user.phone,
+            "agente": user.added_by, 
+            "legal_address": user.legal_address,
+            "user_city": user.user_city,
+            "user_department": user.user_department,
+            "id_number": user.id_number,
+            "tax_id": user.tax_id,
+            "bank_name": user.bank_name,
+            "account_type": user.account_type,
+            "account_number": user.account_number,
+            "documents": documents_dict
         }
+
+
 
     debtor = db.query(UserInDB).filter(UserInDB.id_number == mortgage.debtor_id).first()
     lender = db.query(UserInDB).filter(UserInDB.id_number == mortgage.lender_id).first()
