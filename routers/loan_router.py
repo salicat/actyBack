@@ -6,14 +6,25 @@ from db.db_connection import get_db
 from db.all_db import PropInDB, UserInDB, LogsInDb, LoanProgress, File 
 from datetime import datetime, timedelta, timezone
 from sqlalchemy.sql import func
-import boto3
+import boto3 
 from botocore.client import Config
+from email.mime.text import MIMEText
+from email.mime.multipart import MIMEMultipart
+import smtplib
+from smtplib import SMTP
 from dotenv import load_dotenv
 import jwt
 import os
 import re
  
 load_dotenv()
+
+smtp_host = os.getenv('MAILERTOGO_SMTP_HOST')
+smtp_user = os.getenv('MAILERTOGO_SMTP_USER')
+smtp_password = os.getenv('MAILERTOGO_SMTP_PASSWORD')
+server = SMTP(smtp_host, 587)  
+server.starttls() 
+server.login(smtp_user, smtp_password) 
 
 utc_now                 = utc_now = datetime.now(timezone.utc)
 utc_offset              = timedelta(hours=-5)
@@ -69,10 +80,10 @@ async def get_loan_applications(db: Session = Depends(get_db), token: str = Head
     if not token:
         raise HTTPException(status_code=401, detail="Token not provided")
 
-    decoded_token = decode_jwt(token)
-    role_from_token = decoded_token.get("role")
-    user_id_from_token = decoded_token.get("id")
-    user_pk_from_token = decoded_token.get("pk")
+    decoded_token       = decode_jwt(token)
+    role_from_token     = decoded_token.get("role")
+    user_id_from_token  = decoded_token.get("id")
+    user_pk_from_token  = decoded_token.get("pk")
 
     if role_from_token is None:
         raise HTTPException(status_code=403, detail="Token is missing or invalid")
@@ -96,6 +107,7 @@ async def get_loan_applications(db: Session = Depends(get_db), token: str = Head
         applications = (
             db.query(LoanProgress)
             .join(subquery, LoanProgress.id == subquery.c.max_id)
+            .order_by(LoanProgress.date.desc())
             .all()
         )
     
@@ -116,6 +128,7 @@ async def get_loan_applications(db: Session = Depends(get_db), token: str = Head
         applications = (
             db.query(LoanProgress)
             .join(subquery, LoanProgress.id == subquery.c.max_id)
+            .order_by(LoanProgress.date.desc())
             .all()
         )
 
@@ -177,6 +190,7 @@ async def get_loan_application_details(matricula_id: str, db: Session = Depends(
 
     # Get loan progress entries
     loan_progress_entries = db.query(LoanProgress).filter(LoanProgress.property_id == property_detail.id).all()
+
     credit_detail = [{
         "date": entry.date,
         "status": entry.status,
@@ -272,30 +286,78 @@ async def update_loan_application(matricula_id: str, update_data: dict, db: Sess
     if evaluation:
         property_detail.evaluation = evaluation
 
+    # Fetch owner email
+    owner = db.query(UserInDB).filter(UserInDB.id_number == property_detail.owner_id).first()
+    if not owner:
+        raise HTTPException(status_code=404, detail="Owner not found")
+    owner_email = owner.email
+
     final_status = update_data.get("final_status")
     if final_status:
-        if final_status == "approved":
-            property_detail.study = "approved"
-        elif final_status == "rejected":
-            property_detail.study = "rejected"
+        if final_status in ["approved", "rejected"]:
+            #send email to username with email + temp_password
+            sender_email    = "no-reply@mail.app.actyvalores.com" 
+            receiver_email  =  owner_email
+            subject         = "Hemos Respondido Tu Solicitud"
+            body            = "Hemos Respondido Tu Solicitud"
+            body_html = f"""\
+            <html>
+            <head>
+                <style>
+                    body {{ font-family: Arial, sans-serif; margin: 0; padding: 20px; color: #333; }}
+                    .content {{ background-color: #f4f4f4; padding: 20px; border-radius: 10px; }}
+                    .footer {{ padding-top: 20px; font-size: 12px; color: #666; }}
+                    a {{ color: #0073AA; text-decoration: none; }}
+                    a:hover {{ text-decoration: underline; }}
+                </style>
+            </head>
+            <body>
+                <div class="content">
+                    <h1>Estado de Solicitud de Crédito</h1>
+                    <p>Hola {owner.username},</p>
+                    <p>Tu solicitud de crédito ha sido decidida. Por favor, visita el sitio para más detalles.</p>
+                    <a href='https://app.actyvalores.com'>Ver Detalles</a>
+                </div>
+                <div class="footer">
+                    <p>Saludos,<br>Equipo de Desarrollo<br><a href="https://app.actyvalores.com">actyvalores.com</a></p>
+                </div>
+            </body>
+            </html>
+            """
 
+
+            with smtplib.SMTP(smtp_host, 587) as server:
+                    server.starttls()
+                    server.login(smtp_user, smtp_password) 
+                    msg = MIMEMultipart('alternative')
+                    msg['Subject'] = subject
+                    msg['From'] = sender_email
+                    msg['To'] = receiver_email
+                    part1 = MIMEText(body, 'plain')
+                    part2 = MIMEText(body_html, 'html')
+                    msg.attach(part1)
+                    msg.attach(part2)
+                    server.sendmail(sender_email, receiver_email, msg.as_string())
+            
     db.add(property_detail)
+    
+    
 
     new_loan_progress = LoanProgress(
-        property_id=property_detail.id, 
-        date=datetime.now(), 
-        status=status, 
-        user_id=property_detail.owner_id,
-        notes=notes,  
-        updated_by=user_id_from_token
+        property_id = property_detail.id, 
+        date        = local_timestamp_str, 
+        status      = status, 
+        user_id     = property_detail.owner_id,
+        notes       = notes,  
+        updated_by  = user_id_from_token
     )
     db.add(new_loan_progress)
 
     log_entry = LogsInDb(
-        action="Loan Application Updated", 
-        timestamp=datetime.now(), 
-        message=f"Updated loan application for matricula_id: {matricula_id} with status: {status}", 
-        user_id=user_id_from_token
+        action      = "Loan Application Updated", 
+        timestamp   = local_timestamp_str, 
+        message     = f"Updated loan application for matricula_id: {matricula_id} with status: {status}", 
+        user_id     = user_id_from_token
     )
     db.add(log_entry)
 

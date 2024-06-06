@@ -10,7 +10,11 @@ from datetime import datetime, timedelta, timezone
 import boto3
 from botocore.config import Config
 from dotenv import load_dotenv
+from email.mime.text import MIMEText
+from email.mime.multipart import MIMEMultipart
 from botocore.exceptions import NoCredentialsError
+import smtplib
+from smtplib import SMTP
 import jwt
 import os
 import shutil
@@ -18,6 +22,14 @@ import json
 
 
 load_dotenv()
+
+smtp_host = os.getenv('MAILERTOGO_SMTP_HOST')
+smtp_user = os.getenv('MAILERTOGO_SMTP_USER')
+smtp_password = os.getenv('MAILERTOGO_SMTP_PASSWORD')
+server = SMTP(smtp_host, 587)  
+server.starttls() 
+server.login(smtp_user, smtp_password) 
+
 
 utc_now                 = datetime.now(timezone.utc)
 utc_offset              = timedelta(hours=-5)
@@ -28,9 +40,9 @@ SECRET_KEY                  = "8/8"
 ALGORITHM                   = "HS256"
 ACCESS_TOKEN_EXPIRE_MINUTES = 30
 
-AWS_ACCESS_KEY_ID = os.getenv('AWS_ACCESS_KEY_ID')
-AWS_SECRET_ACCESS_KEY = os.getenv('AWS_SECRET_ACCESS_KEY')
-S3_BUCKET_NAME = 'actyfiles'
+AWS_ACCESS_KEY_ID       = os.getenv('AWS_ACCESS_KEY_ID')
+AWS_SECRET_ACCESS_KEY   = os.getenv('AWS_SECRET_ACCESS_KEY')
+S3_BUCKET_NAME          = 'actyfiles'
 
 
 router = APIRouter()
@@ -47,25 +59,25 @@ def decode_jwt(token):
         raise HTTPException(status_code=401, detail=str(e))
 
 my_config = Config(
-    region_name='us-east-2',  # Change to your bucket's region
-    signature_version='s3v4'
+    region_name         = 'us-east-2',  # Change to your bucket's region
+    signature_version   = 's3v4'
 )
 
 s3_client = boto3.client(
     's3',
-    region_name='us-east-2',  # Change to the actual region of your S3 bucket
-    config=Config(signature_version='s3v4'),
-    aws_access_key_id=AWS_ACCESS_KEY_ID,
-    aws_secret_access_key=AWS_SECRET_ACCESS_KEY
+    region_name             = 'us-east-2',  # Change to the actual region of your S3 bucket
+    config                  = Config(signature_version='s3v4'),
+    aws_access_key_id       = AWS_ACCESS_KEY_ID,
+    aws_secret_access_key   = AWS_SECRET_ACCESS_KEY
 )
 
 #For file saving
 def save_file_to_s3_db(db: Session, entity_type: str, entity_id: int, file_type: str, s3_key: str):
     new_file = File(
-        entity_type = entity_type, 
-        entity_id = entity_id, 
-        file_type = file_type, 
-        file_location = s3_key)  # Store the S3 key instead of the local file path
+        entity_type     = entity_type, 
+        entity_id       = entity_id, 
+        file_type       = file_type, 
+        file_location   = s3_key)  # Store the S3 key instead of the local file path
     db.add(new_file)
     db.commit()
     db.refresh(new_file)
@@ -96,23 +108,25 @@ def generate_presigned_url(object_name, expiration=3600):
 
 @router.post("/property/create/", response_model=PropCreate)
 async def create_property(
-    tax_document: UploadFile = FastAPIFile(...), 
-    property_photo: UploadFile = FastAPIFile(...),
-    property_ctl: UploadFile = FastAPIFile(...), 
-    app_form: Optional[UploadFile] = FastAPIFile(None),
-    property_data: str = Form(...),
-    db: Session = Depends(get_db), 
-    token: str = Header(None)
+    tax_document    : UploadFile = FastAPIFile(...), 
+    property_photo  : UploadFile = FastAPIFile(...),
+    property_ctl    : UploadFile = FastAPIFile(...), 
+    app_form        : Optional[UploadFile] = FastAPIFile(None),
+    property_data   : str = Form(...),
+    db              : Session = Depends(get_db), 
+    token           : str = Header(None)
 ):
     # Load property data from form
-    property_data = json.loads(property_data)
+    property_data = json.loads(property_data) 
 
     # Token validation
     if not token:
         raise HTTPException(status_code=401, detail="Token not provided")
-    decoded_token = decode_jwt(token)
-    role_from_token = decoded_token.get("role")
-    user_id_from_token = decoded_token.get("id")
+    
+    decoded_token       = decode_jwt(token) 
+    role_from_token     = decoded_token.get("role")
+    user_id_from_token  = decoded_token.get("id")
+    
     if role_from_token is None or role_from_token not in ["admin", "debtor", "agent"]:
         raise HTTPException(status_code=403, detail="No tienes permiso para crear propiedades")
 
@@ -123,10 +137,10 @@ async def create_property(
     s3_bucket_name = 'actyfiles'
     file_keys = {}
     files = {
-        'tax_document': tax_document,
+        'tax_document'  : tax_document,
         'property_photo': property_photo,
-        'property_ctl': property_ctl,
-        'app_form': app_form
+        'property_ctl'  : property_ctl,
+        'app_form'      : app_form
     }
 
     # Upload files and gather keys
@@ -148,16 +162,60 @@ async def create_property(
             save_file_to_s3_db(db, "property", new_property.id, file_type, file_key)
 
         new_loan_progress = LoanProgress(
-            property_id=new_property.id,
-            date=local_timestamp_str,
-            status="study",
-            user_id=user_id_from_token,
-            notes=f"Solicitud de crédito iniciada por {role_from_token}",
-            updated_by=user_id_from_token
+            property_id = new_property.id,
+            date        = local_timestamp_str,
+            status      = "study",
+            user_id     = user_id_from_token,
+            notes       = f"Solicitud de crédito iniciada por {role_from_token}",
+            updated_by  = user_id_from_token
         )
         db.add(new_loan_progress)
-
         db.commit()
+
+        
+        #send email to username with email + temp_password
+        sender_email    = "no-reply@mail.app.actyvalores.com" 
+        receiver_email  =  "comercial@actyvalores.com"
+        subject         = "Nueva Solicitud de crédito"
+        body            = "Hemos Recibido Tu Solicitud"
+        body_html = f"""\
+        <html>
+        <head>
+            <style>
+                body {{ font-family: Arial, sans-serif; margin: 0; padding: 20px; color: #333; }}
+                .content {{ background-color: #f4f4f4; padding: 20px; border-radius: 10px; }}
+                .footer {{ padding-top: 20px; font-size: 12px; color: #666; }}
+                a {{ color: #0073AA; text-decoration: none; }}
+                a:hover {{ text-decoration: underline; }}
+            </style>
+        </head>
+        <body>
+            <div class="content">
+                <h1>Nueva Solicitud de Crédito Recibida</h1>
+                <p>Hola,</p>
+                <p>Hemos recibido tu solicitud de crédito y está siendo procesada. Recibirás una actualización dentro de las próximas 24 horas.</p>
+                <p>Gracias por elegirnos para tus necesidades financieras.</p>
+            </div>
+            <div class="footer">
+                <p>Saludos,<br>Equipo de Desarrollo<br><a href="https://app.actyvalores.com">actyvalores.com</a></p>
+            </div>
+        </body>
+        </html>
+        """
+
+
+        with smtplib.SMTP(smtp_host, 587) as server:
+                server.starttls()
+                server.login(smtp_user, smtp_password) 
+                msg = MIMEMultipart('alternative')
+                msg['Subject'] = subject
+                msg['From'] = sender_email
+                msg['To'] = receiver_email
+                part1 = MIMEText(body, 'plain')
+                part2 = MIMEText(body_html, 'html')
+                msg.attach(part1)
+                msg.attach(part2)
+                server.sendmail(sender_email, receiver_email, msg.as_string())
     except Exception as e:
         db.rollback()
         raise HTTPException(status_code=500, detail=f"Transaction failed: {str(e)}")
@@ -305,7 +363,7 @@ def get_properties_by_referral(referralId: str, db: Session = Depends(get_db)):
         ).first()
 
         # Ensure that property_photo is not None before accessing its attributes
-        photo_location = property_photo.file_location if property_photo else None
+        property_photo_url = generate_presigned_url(property_photo.file_location) if property_photo else None
 
         properties_data.append({
             "id": property.id,
@@ -319,7 +377,7 @@ def get_properties_by_referral(referralId: str, db: Session = Depends(get_db)):
             "rate_proposed": property.rate_proposed,
             "prop_status": property.prop_status,
             "comments": property.comments,
-            "property_photo": photo_location  # Use the photo_location variable here
+            "property_photo": property_photo_url  # Use the photo_location variable here
         })
 
     if not properties_data:
@@ -624,6 +682,9 @@ def select_property(property_id: int, db: Session = Depends(get_db), token: str 
     if not property:
         raise HTTPException(status_code=404, detail="Property not found")
     
+    #SET THE VALUE FOR THE LENDER TO PAY IN ADVANCE
+    advance = property.loan_solicited * 0.03
+    
     # Check for the provisional mortgage created when loan was approved
     mortgage = db.query(MortgageInDB).filter(MortgageInDB.matricula_id == property.matricula_id).first()
     if not mortgage:
@@ -642,6 +703,108 @@ def select_property(property_id: int, db: Session = Depends(get_db), token: str 
 
     property.comments = "selected"
     
+    
+    #send email to username with email + temp_password
+    debtor = db.query(UserInDB).filter(UserInDB.id_number == mortgage.debtor_id).first()
+    debtor_mail = debtor.email
+    lender_mail = lender.email
+    
+    sender_email    = "no-reply@mail.app.actyvalores.com" 
+    receiver_email  =  debtor_mail
+    subject         = "Propiedad Seleccionada"
+    body            = "Tu Propiedad ha sido seleccionada"
+    body_html = f"""\
+    <html>
+    <head>
+        <style>
+            body {{ font-family: Arial, sans-serif; margin: 0; padding: 20px; color: #333; }}
+            .content {{ background-color: #f4f4f4; padding: 20px; border-radius: 10px; }}
+            .footer {{ padding-top: 20px; font-size: 12px; color: #666; }}
+            a {{ color: #0073AA; text-decoration: none; }}
+            a:hover {{ text-decoration: underline; }}
+        </style>
+    </head>
+    <body>
+        <div class="content">
+            <h1>Tu Propiedad Ha Sido Seleccionada Para Hipoteca!</h1>
+            <p>Hola {debtor.username},</p>
+            <p>Vamos a revisar que todo esté en order para continuar con la documentacion.</p>
+            <p>En proximos días recibiras instrucciones para acercarte a la notaria a firmar las escrituras</p>
+            <br>
+            <p>Si tienes alguna duda comunicate con tu asesor, si no tienes uno escribenos a:</p>
+            <p>comercial@actyvalores.com</p>
+        </div>
+        <div class="footer">
+            <p>Saludos,<br>Equipo de Desarrollo<br><a href="https://app.actyvalores.com">actyvalores.com</a></p>
+        </div>
+    </body>
+    </html>
+    """
+
+
+    with smtplib.SMTP(smtp_host, 587) as server:
+            server.starttls()
+            server.login(smtp_user, smtp_password) 
+            msg = MIMEMultipart('alternative')
+            msg['Subject'] = subject
+            msg['From'] = sender_email
+            msg['To'] = receiver_email
+            part1 = MIMEText(body, 'plain')
+            part2 = MIMEText(body_html, 'html')
+            msg.attach(part1)
+            msg.attach(part2)
+            server.sendmail(sender_email, receiver_email, msg.as_string())
+            
+    sender_email    = "no-reply@mail.app.actyvalores.com" 
+    receiver_email  =  lender_mail
+    subject         = "Propiedad Seleccionada"
+    body            = "Has Seleccionado Una Propiedad para Invertir"
+    body_html = f"""\
+    <html>
+    <head>
+        <style>
+            body {{ font-family: Arial, sans-serif; margin: 0; padding: 20px; color: #333; }}
+            .content {{ background-color: #f4f4f4; padding: 20px; border-radius: 10px; }}
+            .footer {{ padding-top: 20px; font-size: 12px; color: #666; }}
+            a {{ color: #0073AA; text-decoration: none; }}
+            a:hover {{ text-decoration: underline; }}
+        </style>
+    </head>
+    <body>
+        <div class="content">
+            <h1>Felicidades!</h1>
+            <p>Hola {lender.username},</p>
+            <p>Para iniciar el tramite de escrituracion deber seguir los siguientes pasos:</p>
+            <p>1. Girar el valor de los tramites notariales equivalentes a: ${advance}</p>
+            <p>2. Firmar el contrato de mandato o poder para firma de escrituras en caso de no poder presentarse a la notaria</p>
+            <br>
+            <p>Datos Bancarios </p>
+            <p>
+            <br>
+            <p>Si tienes alguna duda comunicate con tu asesor, si no tienes uno escribenos a:</p>
+            <p>comercial@actyvalores.com</p>
+        </div>
+        <div class="footer">
+            <p>Saludos,<br>Equipo de Desarrollo<br><a href="https://app.actyvalores.com">actyvalores.com</a></p>
+        </div>
+    </body>
+    </html>
+    """
+
+
+    with smtplib.SMTP(smtp_host, 587) as server:
+            server.starttls()
+            server.login(smtp_user, smtp_password) 
+            msg = MIMEMultipart('alternative')
+            msg['Subject'] = subject
+            msg['From'] = sender_email
+            msg['To'] = receiver_email
+            part1 = MIMEText(body, 'plain')
+            part2 = MIMEText(body_html, 'html')
+            msg.attach(part1)
+            msg.attach(part2)
+            server.sendmail(sender_email, receiver_email, msg.as_string())
+    
     # Log the property selection
     log_entry = LogsInDb(
         action      = "Property Selected",
@@ -653,6 +816,7 @@ def select_property(property_id: int, db: Session = Depends(get_db), token: str 
     db.commit()
 
     return {"message": f"Property with ID {property_id} successfully selected by {lender.username}"}
+
 
 @router.put("/complete_property/{prop_matricula_id}")
 def update_prop(prop_matricula_id: str, update_data: PropertyUpdate, db: Session = Depends(get_db), token: str = Header(None)):

@@ -9,14 +9,13 @@ from datetime import datetime, timedelta, timezone
 from sqlalchemy import func
 import smtplib
 from smtplib import SMTP
-from dotenv import load_dotenv
+from dotenv import load_dotenv 
 from email.mime.text import MIMEText
 from email.mime.multipart import MIMEMultipart
 import boto3
 from botocore.config import Config
 import json 
 import os
-import shutil 
 import random
 import string
 import secrets
@@ -345,7 +344,7 @@ async def create_affiliate_user(
             <p>Te recomendamos cambiar tu contraseña después de iniciar sesión por primera vez.</p>
         </div>
         <div class="footer">
-            <p>Saludos,<br>Equipo de Desarrollo<br>app.actyvalores.com</p>
+            <p>Saludos,<br>Equipo de Desarrollo<br><a href="https://app.actyvalores.com">actyvalores.com</a></p>
         </div>
     </body>
     </html>
@@ -859,7 +858,7 @@ async def check_mail(email: str, db: Session = Depends(get_db)):
             <div class="footer">
                 <p>Si no has solicitado este cambio, por favor ignora este mensaje.</p>
                 <p>Saludos,<br>Equipo de Desarrollo</p>
-                <p>app.actyvalores.com</p>
+                <p><a href="https://app.actyvalores.com">actyvalores.com</a></p>
             </div>
         </body>
         </html>

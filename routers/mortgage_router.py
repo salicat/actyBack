@@ -261,7 +261,6 @@ def get_mortgages_by_lender(lender_id: str, db: Session = Depends(get_db)):
         return {"results" :result, "paid" : paid, "email" :lender_email}
 
 
-
 @router.get("/admin_panel/mortgages/") #LOGS #TOKE-ROLE ADMIN
 async def get_all_mortgages(db: Session = Depends(get_db), token: str = Header(None)):
     if token:
@@ -289,31 +288,11 @@ async def get_all_mortgages(db: Session = Depends(get_db), token: str = Header(N
                         "property_pk"   : prop.id,
                         "matricula_id"  : prop.matricula_id,
                         "etapa"         : prop.mortgage_stage,
-                        "deudor"        : debtor_username  
+                        "deudor"        : debtor_username,
+                        "inversionista" : prop.lender_id  
                     })
-
-            # Log successful retrieval of all mortgages
-            log_entry = LogsInDb(
-                action      = "Mortgages Component Accessed",
-                timestamp   = local_timestamp_str,
-                message     = "All mortgages retrieved by admin",
-                user_id     = decoded_token.get("id")
-            )
-            db.add(log_entry)
-            db.commit()
-
             return {"mortgage_info" : mortgage_info, "mort_to_process" : mort_to_process}
         else:
-            # Log unauthorized access attempt
-            log_entry = LogsInDb(
-                action      = "User Alert",
-                timestamp   = local_timestamp_str,
-                message     = "Unauthorized access attempt to view all mortgages (Insufficient permissions)",
-                user_id     = decoded_token.get("id")
-            )
-            db.add(log_entry)
-            db.commit()
-
             raise HTTPException(status_code=403, detail="No tienes permiso de ver esta informacion")
     else:
         # Log unauthorized access attempt
@@ -366,16 +345,6 @@ def get_mortgages_by_debtor(debtor_id: str, db: Session = Depends(get_db)):
 @router.get("/mortgage_detail/{debtor_id}")  # LOGS #TOKEN ADMIN ONLY
 def get_mortgage_details_by_debtor(debtor_id: str, db: Session = Depends(get_db), token: str = Header(None)):
     if not token:
-        # Log unauthorized access attempt
-        log_entry = LogsInDb(
-            action="User Alert",
-            timestamp=local_timestamp_str,
-            message="Unauthorized access attempt to retrieve mortgage details (Token not provided)",
-            user_id=None  # Since the token isn't provided, set it to None
-        )
-        db.add(log_entry)
-        db.commit()
-
         raise HTTPException(status_code=401, detail="Token not provided")
 
     # Decode the token and verify the user's role
@@ -399,27 +368,7 @@ def get_mortgage_details_by_debtor(debtor_id: str, db: Session = Depends(get_db)
     debtor = db.query(UserInDB).filter(UserInDB.id_number == debtor_id).first()
     
     if debtor is None:
-        # Log user not found
-        log_entry = LogsInDb(
-            action="User Alert",
-            timestamp=local_timestamp_str,
-            message=f"User not found with ID: {debtor_id}",
-            user_id=user_pk_from_token  # Use the primary key ID from the token
-        )
-        db.add(log_entry)
-        db.commit()
-
         return {"message": "No existe usuario con el ID en referencia"}
-
-    # Log successful retrieval of mortgages
-    log_entry = LogsInDb(
-        action="Admin Accessed Mortgages Component",
-        timestamp=local_timestamp_str,
-        message=f"Mortgages retrieved for debtor with ID: {debtor_id} (by admin)",
-        user_id=user_pk_from_token  # Use the primary key ID from the token
-    )
-    db.add(log_entry)
-    db.commit()
 
     mortgage_info = []
     mortgages = db.query(MortgageInDB).filter(MortgageInDB.debtor_id == debtor.id_number).all()
