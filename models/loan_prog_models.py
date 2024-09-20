@@ -17,4 +17,4 @@ class LoanProgressUpdate(BaseModel):
     notes       : Optional[str] = None
 
     class Config:
-        orm_mode = True
+        from_attributes = True

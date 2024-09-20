@@ -15,4 +15,4 @@ class PenaltyRequest (BaseModel):
     month_year      : date
 
     class Config:
-        orm_mode = True
+        from_attributes = True

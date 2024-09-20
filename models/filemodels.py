@@ -7,5 +7,5 @@ class FileUpload(BaseModel):
     file_type   : str
     
     class Config:
-        orm_mode = True
+        from_attributes = True
 

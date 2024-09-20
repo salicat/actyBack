@@ -130,7 +130,8 @@ required_fields_by_role = {
                    "user_city", 
                    "user_department", 
                    "tax_id"
-                   ]
+                   ],
+    "admin"     : []
 }
 
 def validate_user_info(user: UserInDB) -> bool:
@@ -149,8 +150,7 @@ def create_temp_password(username):
 @router.post("/user/create/")  # LOGS
 async def create_user(user_in: UserIn, db: Session = Depends(get_db)):
     allowed_roles = ["admin", "lender", "debtor", "agent"]  
-    for user in user_in:
-        print(user)
+    
     if user_in.role.lower() not in allowed_roles:
         raise HTTPException(status_code=400, detail="Invalid role. Allowed roles are: admin, lender, debtor, agent")
 
@@ -383,8 +383,8 @@ async def create_affiliate_user(
     db.commit()
     
     
-    return {"message": f"Has creado el usuario '{user_in.username}'",
-            "temporary_password": temp_password
+    return {"message": f"Has creado el usuario '{user_in.username}'"
+            
             }
     
 
@@ -427,6 +427,7 @@ async def auth_user(user_au: UserAuth, db: Session = Depends(get_db)):
 
 @router.get("/user/perfil/{user_info_ask}")  # LOGS
 async def get_mi_perfil(user_info_ask: str, db: Session = Depends(get_db)):
+    print(str(user_info_ask))
     user_info = db.query(UserInDB).filter_by(id_number=user_info_ask).first()
     if not user_info:
         raise HTTPException(status_code=404, detail="El usuario no existe")
@@ -460,6 +461,7 @@ async def get_mi_perfil(user_info_ask: str, db: Session = Depends(get_db)):
         "tax_id"           : user_info.tax_id,
         "bank_name"        : user_info.bank_name,
         "account_type"     : user_info.account_type,
+        "civil_status"     : user_info.civil_status, 
         "account_number"   : user_info.account_number,
         "documents": [
             {"name": "Cedula cara frontal", "key": "cedula_front", "uploaded": documents_status["cedula_front"] is not None, "path": documents_status["cedula_front"]["path"] if documents_status["cedula_front"] else None},
@@ -535,6 +537,8 @@ async def get_all_users(
     user_id = decoded_token.get("id")
     user_pk = decoded_token.get("pk")  # Added primary key of the agent
 
+    is_first_login = False
+
     if role == "admin":
         # Retrieve all users
         users       = db.query(UserInDB).all() 
@@ -551,6 +555,13 @@ async def get_all_users(
 
     elif role == "agent":
         # Retrieve users added by the agent
+        last_logs_count = db.query(LogsInDb).filter(LogsInDb.user_id == user_id).count()
+        # Si el usuario tiene menos de 3 registros, lo consideramos su primera vez
+        if last_logs_count < 3:
+            is_first_login = True
+        else:
+            is_first_login = False
+
         users_added_by_agent = db.query(UserInDB).filter(UserInDB.added_by == user_pk).all()
         user_info = []
         for user in users_added_by_agent:
@@ -578,10 +589,10 @@ async def get_all_users(
                 "status"        : user.user_status,
                 "solicitudes"   : solicitudes if solicitudes else "Ninguna"
             })
-        return user_info
+        return {"users": user_info, "is_first_login": is_first_login}
     else:
         raise HTTPException(status_code=403, detail="No tienes permiso de ver esta información")
-
+ 
 
 @router.get("/agent/clients/")  # Logs for Admin and Agent, token required
 async def get_all_users(

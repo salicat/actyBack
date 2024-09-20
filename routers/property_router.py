@@ -13,6 +13,7 @@ from dotenv import load_dotenv
 from email.mime.text import MIMEText
 from email.mime.multipart import MIMEMultipart
 from botocore.exceptions import NoCredentialsError
+from typing import List
 import smtplib
 from smtplib import SMTP
 import jwt
@@ -106,57 +107,70 @@ def generate_presigned_url(object_name, expiration=3600):
         return None
     return response
 
+
 @router.post("/property/create/", response_model=PropCreate)
 async def create_property(
-    tax_document    : UploadFile = FastAPIFile(...), 
-    property_photo  : UploadFile = FastAPIFile(...),
-    property_ctl    : UploadFile = FastAPIFile(...), 
-    app_form        : Optional[UploadFile] = FastAPIFile(None),
-    property_data   : str = Form(...),
-    db              : Session = Depends(get_db), 
-    token           : str = Header(None)
+    tax_document    : UploadFile            = FastAPIFile(...), 
+    property_photo  : List[UploadFile]      = FastAPIFile(...),
+    property_ctl    : UploadFile            = FastAPIFile(...), 
+    additional_docs : Optional[List[UploadFile]]  = FastAPIFile(None),
+    property_data   : str                   = Form(...),
+    db              : Session               = Depends(get_db), 
+    token           : str                   = Header(None)
 ):
-    # Load property data from form
-    property_data = json.loads(property_data) 
-
-    # Token validation
-    if not token:
-        raise HTTPException(status_code=401, detail="Token not provided")
-    
-    decoded_token       = decode_jwt(token) 
-    role_from_token     = decoded_token.get("role")
-    user_id_from_token  = decoded_token.get("id")
-    
-    if role_from_token is None or role_from_token not in ["admin", "debtor", "agent"]:
-        raise HTTPException(status_code=403, detail="No tienes permiso para crear propiedades")
-
-    if db.query(PropInDB).filter(PropInDB.matricula_id == property_data['matricula_id']).first():
-        raise HTTPException(status_code=400, detail="Property with this matricula_id already exists")
-
-    # S3 bucket for file storage
-    s3_bucket_name = 'actyfiles'
-    file_keys = {}
-    files = {
-        'tax_document'  : tax_document,
-        'property_photo': property_photo,
-        'property_ctl'  : property_ctl,
-        'app_form'      : app_form
-    }
-
-    # Upload files and gather keys
-    for file_type, file in files.items():
-        if file:
-            file_key = f"{property_data['matricula_id']}_{file_type}_{file.filename}"
-            if not upload_file_to_s3(file.file, s3_bucket_name, file_key):
-                raise HTTPException(status_code=500, detail=f"Failed to upload {file.filename}")
-            file_keys[file_type] = file_key
-
-    # Create property and loan progress in the database
     try:
+        # Load property data from form
+        property_data = json.loads(property_data) 
+
+        # Token validation
+        if not token:
+            raise HTTPException(status_code=401, detail="Token not provided")
+        
+        decoded_token       = decode_jwt(token) 
+        role_from_token     = decoded_token.get("role")
+        user_id_from_token  = decoded_token.get("id")
+        
+        if role_from_token is None or role_from_token not in ["admin", "debtor", "agent"]:
+            raise HTTPException(status_code=403, detail="No tienes permiso para crear propiedades")
+
+        if db.query(PropInDB).filter(PropInDB.matricula_id == property_data['matricula_id']).first():
+            raise HTTPException(status_code=400, detail="Property with this matricula_id already exists")
+
+        # S3 bucket for file storage
+        s3_bucket_name = 'actyfiles'
+        file_keys = {}
+        files = {
+            'tax_document'  : tax_document,
+            'property_photo': property_photo,
+            'property_ctl'  : property_ctl,
+            'additional_docs': additional_docs  # Añadimos los documentos adicionales
+        }
+
+        # Upload files and gather keys
+        for file_type, file_list in files.items():
+            if isinstance(file_list, list):
+                # Si el archivo es una lista (property_photo o additional_docs), manejamos múltiples archivos
+                for index, file in enumerate(file_list):
+                    file_key = f"{property_data['matricula_id']}_{file_type}_{index}_{file.filename}"
+                    if not upload_file_to_s3(file.file, s3_bucket_name, file_key):
+                        raise HTTPException(status_code=500, detail=f"Failed to upload {file.filename}")
+                    file_keys[f"{file_type}_{index}"] = file_key
+            else:
+                # Si es un archivo individual
+                if file_list:
+                    file_key = f"{property_data['matricula_id']}_{file_type}_{file_list.filename}"
+                    if not upload_file_to_s3(file_list.file, s3_bucket_name, file_key):
+                        raise HTTPException(status_code=500, detail=f"Failed to upload {file_list.filename}")
+                    file_keys[file_type] = file_key
+
+        # Create property and loan progress in the database
         new_property = PropInDB(**property_data, study="study", comments="received")
         db.add(new_property)
         db.flush()  # Get new_property.id without committing transaction
 
+
+        owner_id = property_data['owner_id']
+        
         # Save file references in the database
         for file_type, file_key in file_keys.items():
             save_file_to_s3_db(db, "property", new_property.id, file_type, file_key)
@@ -165,17 +179,21 @@ async def create_property(
             property_id = new_property.id,
             date        = local_timestamp_str,
             status      = "study",
-            user_id     = user_id_from_token,
+            user_id     = owner_id,
             notes       = f"Solicitud de crédito iniciada por {role_from_token}",
             updated_by  = user_id_from_token
         )
         db.add(new_loan_progress)
         db.commit()
 
+        # Enviar correo de notificación
         
-        #send email to username with email + temp_password
+        debtor = db.query(UserInDB).filter(UserInDB.id_number == owner_id).first()       
+        debtor_email = debtor.email
+
+        # Enviar correo al deudor
         sender_email    = "no-reply@mail.app.actyvalores.com" 
-        receiver_email  =  "comercial@actyvalores.com"
+        receiver_email  =  debtor_email
         subject         = "Nueva Solicitud de crédito"
         body            = "Hemos Recibido Tu Solicitud"
         body_html = f"""\
@@ -194,7 +212,7 @@ async def create_property(
                 <h1>Nueva Solicitud de Crédito Recibida</h1>
                 <p>Hola,</p>
                 <p>Hemos recibido tu solicitud de crédito y está siendo procesada. Recibirás una actualización dentro de las próximas 24 horas.</p>
-                <p>Gracias por elegirnos para tus necesidades financieras.</p>
+                <p>Gracias por elegirnos!</p>
             </div>
             <div class="footer">
                 <p>Saludos,<br>Equipo de Desarrollo<br><a href="https://app.actyvalores.com">actyvalores.com</a></p>
@@ -202,7 +220,6 @@ async def create_property(
         </body>
         </html>
         """
-
 
         with smtplib.SMTP(smtp_host, 587) as server:
                 server.starttls()
@@ -216,10 +233,10 @@ async def create_property(
                 msg.attach(part1)
                 msg.attach(part2)
                 server.sendmail(sender_email, receiver_email, msg.as_string())
+
     except Exception as e:
         db.rollback()
         raise HTTPException(status_code=500, detail=f"Transaction failed: {str(e)}")
-
 
     return {
         "owner_id"      : new_property.owner_id,
@@ -236,7 +253,7 @@ async def create_property(
         "study"         : new_property.study,
         "comments"      : new_property.comments
     }
-    
+
     
 @router.get("/property/retrieve/")
 def retrieve_property(id_number: str, db: Session = Depends(get_db)):
@@ -259,15 +276,15 @@ def retrieve_property(id_number: str, db: Session = Depends(get_db)):
     if mortgages:
         for mort in mortgages:
             mort_dict = {
-                "lender_id": mort.lender_id,
-                "debtor_id": mort.debtor_id,
-                "agent_id": mort.agent_id,
-                "matricula_id": mort.matricula_id,
-                "initial_balance": mort.initial_balance,
-                "interest_rate": mort.interest_rate,
-                "mortgage_stage" : mort.mortgage_stage,
-                "mortgage_status": mort.mortgage_status,
-                "comments"  : mort.comments
+                "lender_id"         : mort.lender_id,
+                "debtor_id"         : mort.debtor_id,
+                "agent_id"          : mort.agent_id,
+                "matricula_id"      : mort.matricula_id,
+                "initial_balance"   : mort.initial_balance,
+                "interest_rate"     : mort.interest_rate,
+                "mortgage_stage"    : mort.mortgage_stage,
+                "mortgage_status"   : mort.mortgage_status,
+                "comments"          : mort.comments
             }
             user_mortgages.append(mort_dict)
     else:
@@ -633,7 +650,7 @@ def update_property_status(matricula_id: str, status_update: StatusUpdate, db: S
         db.commit()
 
     return {
-        "message": "Property and possibly mortgage updated successfully",
+        "message": "Property and mortgage updated successfully",
         "property": {
             "matricula_id": property.matricula_id,
             "prop_status": property.prop_status,
@@ -644,6 +661,7 @@ def update_property_status(matricula_id: str, status_update: StatusUpdate, db: S
 
 @router.put("/property/select/{property_id}") 
 def select_property(property_id: int, db: Session = Depends(get_db), token: str = Header(None)):
+
     if not token:
         # Log unauthorized access attempt
         log_entry = LogsInDb(
@@ -683,7 +701,7 @@ def select_property(property_id: int, db: Session = Depends(get_db), token: str 
         raise HTTPException(status_code=404, detail="Property not found")
     
     #SET THE VALUE FOR THE LENDER TO PAY IN ADVANCE
-    advance = property.loan_solicited * 0.03
+    advance = max((1.25 / 1000) * property.loan_solicited + (0.035 * property.loan_solicited),1900000)
     
     # Check for the provisional mortgage created when loan was approved
     mortgage = db.query(MortgageInDB).filter(MortgageInDB.matricula_id == property.matricula_id).first()
@@ -853,3 +871,34 @@ def update_prop(prop_matricula_id: str, update_data: PropertyUpdate, db: Session
 
     db.commit()
     return {"message": "Property updated successfully"}
+
+@router.get("/property_detail/{prop_id}")
+def propdetails(prop_id: int, db: Session = Depends(get_db)):
+    # Query the property details based on prop_id
+    property_detail = db.query(PropInDB).filter(PropInDB.id == prop_id).first()
+    if not property_detail:
+        raise HTTPException(status_code=404, detail="Property not found")
+    
+    # Query the owner's details based on the owner_id from property_detail
+    owner_detail = db.query(UserInDB).filter(UserInDB.id_number == property_detail.owner_id).first()
+    if not owner_detail:
+        raise HTTPException(status_code=404, detail="Owner not found")
+
+    loan_details = db.query(LoanProgress).filter(property_detail.id == LoanProgress.property_id).all()[-1]
+
+    # Construct the response dictionary
+    property_data = {
+        "id"            : property_detail.id,
+        "tax_valuation" : property_detail.tax_valuation,
+        "rate_proposed" : property_detail.rate_proposed,
+        "loan_solicited": property_detail.loan_solicited,
+        "estrato"       : property_detail.strate,
+        "area"          : property_detail.area,
+        "type"          : property_detail.type,
+        "city"          : property_detail.city,
+        "department"    : property_detail.department,
+        "score"         : owner_detail.score,
+        "comments"      : loan_details.notes
+    }
+
+    return property_data

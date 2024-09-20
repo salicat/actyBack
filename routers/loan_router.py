@@ -91,49 +91,44 @@ async def get_loan_applications(db: Session = Depends(get_db), token: str = Head
     if role_from_token not in ["admin", "agent"]:
         raise HTTPException(status_code=403, detail="Not authorized to view loan applications")
 
-    applications = []
-
-    if role_from_token == "admin":
-        # Existing logic for admins to retrieve all applications
-        subquery = (
-            db.query(
-                LoanProgress.property_id, 
-                func.max(LoanProgress.id).label("max_id")
-            )
-            .group_by(LoanProgress.property_id)
-            .subquery()
-        )
-
-        applications = (
-            db.query(LoanProgress)
-            .join(subquery, LoanProgress.id == subquery.c.max_id)
-            .order_by(LoanProgress.date.desc())
-            .all()
-        )
-    
     elif role_from_token == "agent":
-        # Modified logic for agents to retrieve applications for their users
-        subquery = ( 
-            db.query(
-                LoanProgress.property_id, 
-                func.max(LoanProgress.id).label("max_id")
-            )
-            .join(PropInDB, PropInDB.id == LoanProgress.property_id)
-            .join(UserInDB, UserInDB.id_number == PropInDB.owner_id)
+    # Step 1: Get all users added by the agent
+        agent_users = (
+            db.query(UserInDB.id_number)  # Get the user IDs (id_number) of users added by the agent
             .filter(UserInDB.added_by == user_pk_from_token)
-            .group_by(LoanProgress.property_id)
-            .subquery()
-        )
-
-        applications = (
-            db.query(LoanProgress)
-            .join(subquery, LoanProgress.id == subquery.c.max_id)
-            .order_by(LoanProgress.date.desc())
             .all()
         )
 
+        # Step 2: Extract the user IDs into a list
+        user_ids = [user.id_number for user in agent_users]
+
+
+        # Step 3: Get the properties owned by these users
+        agent_properties = (
+            db.query(PropInDB.id)  # Get property IDs
+            .filter(PropInDB.owner_id.in_(user_ids))  # Only get properties owned by the users added by the agent
+            .all()
+        )
+
+        # Step 4: Extract property IDs into a list
+        property_ids = [prop.id for prop in agent_properties]
+
+
+        # Step 5: Get the most recent LoanProgress entries for these properties
+        if property_ids:  # Only proceed if there are properties
+            applications = (
+                db.query(LoanProgress)
+                .filter(LoanProgress.property_id.in_(property_ids))  # Get LoanProgress for these properties
+                .order_by(LoanProgress.date.desc())  # Order by the most recent date
+                .all()
+            )
+
+        else:
+            applications = []
+
+    
     if not applications:
-        return {"message" : "No Tienes Solicitudes Aún"}
+        return {"message": "No Tienes Solicitudes Aún"}
     
     application_data = []
     for app in applications:
@@ -141,21 +136,22 @@ async def get_loan_applications(db: Session = Depends(get_db), token: str = Head
         if property_info:
             owner_info = db.query(UserInDB).filter(UserInDB.id_number == property_info.owner_id).first()
             application_data.append({
-                "matricula_id"  : property_info.matricula_id,
-                "owner_id"      : property_info.owner_id,
+                "matricula_id": property_info.matricula_id,
+                "owner_id": property_info.owner_id,
                 "owner_username": owner_info.username if owner_info else None,
-                "status"        : app.status,
-                "last_date"     : app.date,
-                "notes"         : app.notes
+                "status": app.status,
+                "last_date": app.date,
+                "notes": app.notes
             })
 
     # Log the action after successful retrieval
     action_description = "Loan Applications Retrieved by Admin" if role_from_token == "admin" else "Loan Applications Retrieved by Agent"
     log_entry = LogsInDb(
-        action      = action_description, 
-        timestamp   = local_timestamp_str, 
-        message     = f"Retrieved {len(application_data)} loan applications", 
-        user_id     = user_id_from_token)
+        action=action_description, 
+        timestamp=local_timestamp_str, 
+        message=f"Retrieved {len(application_data)} loan applications", 
+        user_id=user_id_from_token
+    )
     db.add(log_entry)
     db.commit()
     

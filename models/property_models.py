@@ -21,6 +21,7 @@ class PropCreate(BaseModel):
     study           : Optional[str] = None
     prop_status     : Optional[str] = None
     comments        : Optional[str] = None
+    youtube_link    : Optional[str] = None
 
 class PropUpStatus(BaseModel):
     id              : int
@@ -45,4 +46,4 @@ class PropertyUpdate(BaseModel):
     loan_solicited  : Optional[int] = None
 
     class Config:
-        orm_mode = True
+        from_attributes = True

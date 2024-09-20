@@ -26,5 +26,5 @@ class MortgageUpdate(BaseModel):
     date_signed     : Optional[date]
 
     class Config:
-        orm_mode = True  
+        from_attributes = True  
     

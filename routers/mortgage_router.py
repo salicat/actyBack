@@ -211,6 +211,11 @@ def get_mortgages_by_debtor(debtor_id: str, db: Session = Depends(get_db)):
     
     mortgages = db.query(MortgageInDB).filter(MortgageInDB.debtor_id == debtor_id).all()
 
+    is_first_login = False
+    last_logs_count = db.query(LogsInDb).filter(LogsInDb.user_id == debtor_id).count()
+    if last_logs_count < 3:  # Consideramos el primer login si hay menos de 3 registros
+        is_first_login = True
+    
     if not mortgages:
         return {"message": "No tienes hipotecas como deudor", "email": debtor_mail}
     else:
@@ -236,7 +241,12 @@ def get_mortgages_by_debtor(debtor_id: str, db: Session = Depends(get_db)):
         # Check for pending payments
         payments_pendings = db.query(RegsInDb).filter(RegsInDb.payment_status == "pending", RegsInDb.debtor_id == debtor_id).count()
 
-        return {"mortgage_info": mortgage_info, "payments_pendings": payments_pendings, "email": debtor_mail}
+        return {
+            "mortgage_info": mortgage_info, 
+            "payments_pendings": payments_pendings, 
+            "email": debtor_mail, 
+            "is_first_login": is_first_login
+        }
 
 
 
@@ -254,11 +264,21 @@ def get_mortgages_by_lender(lender_id: str, db: Session = Depends(get_db)):
         if reg.payment_status == "approved":
             paid.append(reg)
 
+    is_first_login = False
+    last_logs_count = db.query(LogsInDb).filter(LogsInDb.user_id == lender_id).count()
+    if last_logs_count < 3:  # Consideramos el primer login si hay menos de 3 registros
+        is_first_login = True
+
     if not mortgages:
         return {"message": "No tienes inversiones en hipotecas aún", "email" :lender_email}
     else:
         result = [mortgage.__dict__ for mortgage in mortgages]
-        return {"results" :result, "paid" : paid, "email" :lender_email}
+        return {
+            "results": result,
+            "paid": paid,
+            "email": lender_email,
+            "is_first_login": is_first_login
+        }
 
 
 @router.get("/admin_panel/mortgages/") #LOGS #TOKE-ROLE ADMIN
@@ -307,39 +327,39 @@ async def get_all_mortgages(db: Session = Depends(get_db), token: str = Header(N
 
         raise HTTPException(status_code=401, detail="Token not provided")
 
-@router.get("/mortgages/debtor/{debtor_id}")  # LOGS
-def get_mortgages_by_debtor(debtor_id: str, db: Session = Depends(get_db)):
-    debtor = db.query(UserInDB).filter(UserInDB.id_number == debtor_id).first()
+# @router.get("/mortgages/debtor/{debtor_id}")  # LOGS
+# def get_mortgages_by_debtor(debtor_id: str, db: Session = Depends(get_db)):
+#     debtor = db.query(UserInDB).filter(UserInDB.id_number == debtor_id).first()
 
-    if debtor is None:
-        # Log user not found
-        log_entry = LogsInDb(
-            action="User Alert",
-            timestamp=local_timestamp_str,
-            message=f"User not found with ID: {debtor_id}",
-            user_id=debtor_id
-        )
-        db.add(log_entry)
-        db.commit()
-        return {"message": "No existe usuario con el ID en referencia"}
+#     if debtor is None:
+#         # Log user not found
+#         log_entry = LogsInDb(
+#             action="User Alert",
+#             timestamp=local_timestamp_str,
+#             message=f"User not found with ID: {debtor_id}",
+#             user_id=debtor_id
+#         )
+#         db.add(log_entry)
+#         db.commit()
+#         return {"message": "No existe usuario con el ID en referencia"}
 
-    # Log successful retrieval of mortgages
-    log_entry = LogsInDb(
-        action="User Accessed Mortgages Component",
-        timestamp=local_timestamp_str,
-        message=f"Mortgages retrieved for debtor with ID: {debtor_id}",
-        user_id=debtor_id
-    )
-    db.add(log_entry)
-    db.commit()
+#     # Log successful retrieval of mortgages
+#     log_entry = LogsInDb(
+#         action="User Accessed Mortgages Component",
+#         timestamp=local_timestamp_str,
+#         message=f"Mortgages retrieved for debtor with ID: {debtor_id}",
+#         user_id=debtor_id
+#     )
+#     db.add(log_entry)
+#     db.commit()
 
-    mortgages = db.query(MortgageInDB).filter(MortgageInDB.debtor_id == debtor_id).all()
-
-    if not mortgages:
-        return {"message": "No tienes hipotecas como deudor"}
-    else:
-        result = [mortgage.__dict__ for mortgage in mortgages]
-        return result
+#     mortgages = db.query(MortgageInDB).filter(MortgageInDB.debtor_id == debtor_id).all()
+    
+#     if not mortgages:
+#         return {"message": "No tienes hipotecas como deudor"}
+#     else:
+#         result = [mortgage.__dict__ for mortgage in mortgages]
+#         return result
 
 
 @router.get("/mortgage_detail/{debtor_id}")  # LOGS #TOKEN ADMIN ONLY
