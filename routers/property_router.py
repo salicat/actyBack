@@ -108,7 +108,7 @@ def generate_presigned_url(object_name, expiration=3600):
     return response
 
 
-@router.post("/property/create/", response_model=PropCreate)
+@router.post("/property/create/", response_model=PropCreate) 
 async def create_property(
     tax_document    : UploadFile            = FastAPIFile(...), 
     property_photo  : List[UploadFile]      = FastAPIFile(...),
@@ -146,15 +146,16 @@ async def create_property(
             'additional_docs': additional_docs  # Añadimos los documentos adicionales
         }
 
-        # Upload files and gather keys
+        # Cargar archivos y recopilar claves
         for file_type, file_list in files.items():
             if isinstance(file_list, list):
                 # Si el archivo es una lista (property_photo o additional_docs), manejamos múltiples archivos
                 for index, file in enumerate(file_list):
-                    file_key = f"{property_data['matricula_id']}_{file_type}_{index}_{file.filename}"
-                    if not upload_file_to_s3(file.file, s3_bucket_name, file_key):
-                        raise HTTPException(status_code=500, detail=f"Failed to upload {file.filename}")
-                    file_keys[f"{file_type}_{index}"] = file_key
+                    if file:  # Asegúrate de que haya archivos antes de procesarlos
+                        file_key = f"{property_data['matricula_id']}_{file_type}_{index}_{file.filename}"
+                        if not upload_file_to_s3(file.file, s3_bucket_name, file_key):
+                            raise HTTPException(status_code=500, detail=f"Failed to upload {file.filename}")
+                        file_keys[f"{file_type}_{index}"] = file_key
             else:
                 # Si es un archivo individual
                 if file_list:
@@ -290,7 +291,7 @@ def retrieve_property(id_number: str, db: Session = Depends(get_db)):
     else:
         user_mortgages = []  # Keep consistent data structure
 
-    return {"properties" : user_properties, "mortgages" : user_mortgages}
+    return {"properties" : user_properties, "mortgages" : user_mortgages} 
 
 
 @router.get("/properties/{status}")  # LOGS #TOKEN-ROLE # posted, selected, funded, mortgage

@@ -217,7 +217,10 @@ def get_mortgages_by_debtor(debtor_id: str, db: Session = Depends(get_db)):
         is_first_login = True
     
     if not mortgages:
-        return {"message": "No tienes hipotecas como deudor", "email": debtor_mail}
+        return {"message": "No tienes hipotecas como deudor", 
+                "email": debtor_mail,
+                "is_first_login": is_first_login
+                }
     else:
         mortgage_info = []
 
@@ -459,7 +462,7 @@ async def gestion_hipotecas(property_id: int, db: Session = Depends(get_db), tok
     decoded_token   = decode_jwt(token)
     role_from_token = decoded_token.get("role")
     
-    if role_from_token != "admin":
+    if role_from_token != "admin" or " lawyer":
         raise HTTPException(status_code=403, detail="Not authorized")
 
     mortgage = db.query(MortgageInDB).filter(MortgageInDB.id == property_id).first()

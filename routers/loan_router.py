@@ -88,47 +88,39 @@ async def get_loan_applications(db: Session = Depends(get_db), token: str = Head
     if role_from_token is None:
         raise HTTPException(status_code=403, detail="Token is missing or invalid")
 
-    if role_from_token not in ["admin", "agent"]:
+    if role_from_token not in ["admin", "agent", "lawyer"]:
         raise HTTPException(status_code=403, detail="Not authorized to view loan applications")
 
-    elif role_from_token == "agent":
-    # Step 1: Get all users added by the agent
-        agent_users = (
-            db.query(UserInDB.id_number)  # Get the user IDs (id_number) of users added by the agent
-            .filter(UserInDB.added_by == user_pk_from_token)
+    applications = []
+
+    if role_from_token == "admin":
+        # Si es admin, obtiene todas las solicitudes de crédito
+        applications = (
+            db.query(LoanProgress)
+            .order_by(LoanProgress.date.desc())
             .all()
         )
-
-        # Step 2: Extract the user IDs into a list
+    elif role_from_token in ["agent", "lawyer"]:
+        # Obtener todos los usuarios añadidos por el agente/abogado
+        agent_users = db.query(UserInDB.id_number).filter(UserInDB.added_by == user_pk_from_token).all()
         user_ids = [user.id_number for user in agent_users]
 
+        # Obtener propiedades de esos usuarios
+        if user_ids:
+            agent_properties = db.query(PropInDB.id).filter(PropInDB.owner_id.in_(user_ids)).all()
+            property_ids = [prop.id for prop in agent_properties]
 
-        # Step 3: Get the properties owned by these users
-        agent_properties = (
-            db.query(PropInDB.id)  # Get property IDs
-            .filter(PropInDB.owner_id.in_(user_ids))  # Only get properties owned by the users added by the agent
-            .all()
-        )
+            # Obtener las solicitudes de crédito más recientes para esos usuarios
+            if property_ids:
+                applications = (
+                    db.query(LoanProgress)
+                    .filter(LoanProgress.property_id.in_(property_ids))
+                    .order_by(LoanProgress.date.desc())
+                    .all()
+                )
 
-        # Step 4: Extract property IDs into a list
-        property_ids = [prop.id for prop in agent_properties]
-
-
-        # Step 5: Get the most recent LoanProgress entries for these properties
-        if property_ids:  # Only proceed if there are properties
-            applications = (
-                db.query(LoanProgress)
-                .filter(LoanProgress.property_id.in_(property_ids))  # Get LoanProgress for these properties
-                .order_by(LoanProgress.date.desc())  # Order by the most recent date
-                .all()
-            )
-
-        else:
-            applications = []
-
-    
     if not applications:
-        return {"message": "No Tienes Solicitudes Aún"}
+        return {"message": "No tienes solicitudes aún"}
     
     application_data = []
     for app in applications:
@@ -136,16 +128,16 @@ async def get_loan_applications(db: Session = Depends(get_db), token: str = Head
         if property_info:
             owner_info = db.query(UserInDB).filter(UserInDB.id_number == property_info.owner_id).first()
             application_data.append({
-                "matricula_id": property_info.matricula_id,
-                "owner_id": property_info.owner_id,
+                "matricula_id"  : property_info.matricula_id,
+                "owner_id"      : property_info.owner_id,
                 "owner_username": owner_info.username if owner_info else None,
-                "status": app.status,
-                "last_date": app.date,
-                "notes": app.notes
+                "status"        : app.status,
+                "last_date"     : app.date,
+                "notes"         : app.notes
             })
 
-    # Log the action after successful retrieval
-    action_description = "Loan Applications Retrieved by Admin" if role_from_token == "admin" else "Loan Applications Retrieved by Agent"
+    # Registro de la acción
+    action_description = "Loan Applications Retrieved by Admin" if role_from_token == "admin" else "Loan Applications Retrieved by Agent/Lawyer"
     log_entry = LogsInDb(
         action=action_description, 
         timestamp=local_timestamp_str, 
@@ -154,8 +146,9 @@ async def get_loan_applications(db: Session = Depends(get_db), token: str = Head
     )
     db.add(log_entry)
     db.commit()
-    
+
     return application_data
+
 
 
 
@@ -208,20 +201,22 @@ async def get_loan_application_details(matricula_id: str, db: Session = Depends(
 
     # Compile property details
     property_info = {
-        "owner_id": property_detail.owner_id,
-        "matricula_id": property_detail.matricula_id,
-        "address": property_detail.address,
-        "neighbourhood": property_detail.neighbourhood,
-        "city": property_detail.city,
-        "department": property_detail.department,
-        "strate": property_detail.strate,
-        "area": property_detail.area,
-        "type": property_detail.type,
-        "tax_valuation": property_detail.tax_valuation,
+        "owner_id"      : property_detail.owner_id,
+        "matricula_id"  : property_detail.matricula_id,
+        "address"       : property_detail.address,
+        "neighbourhood" : property_detail.neighbourhood,
+        "city"          : property_detail.city,
+        "department"    : property_detail.department,
+        "strate"        : property_detail.strate,
+        "area"          : property_detail.area,
+        "type"          : property_detail.type,
+        "tax_valuation" : property_detail.tax_valuation,
         "loan_solicited": property_detail.loan_solicited,
-        "study": property_detail.study,
-        "comments": property_detail.comments,
-        "documents": document_info
+        "study"         : property_detail.study,
+        "comments"      : property_detail.comments,
+        "observations"  : property_detail.observations,
+        "youtube_link"  : property_detail.youtube_link,
+        "documents"     : document_info
     }
 
     # Fetch owner information
@@ -232,9 +227,9 @@ async def get_loan_application_details(matricula_id: str, db: Session = Depends(
     } if owner else {}
 
     return {
-        "credit_detail": credit_detail,
-        "property_detail": [property_info],
-        "owner_info": [owner_info] if owner_info else []
+        "credit_detail"     : credit_detail,
+        "property_detail"   : [property_info],
+        "owner_info"        : [owner_info] if owner_info else []
     }
 
 

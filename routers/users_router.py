@@ -18,7 +18,7 @@ import json
 import os
 import random
 import string
-import secrets
+import secrets 
 
 pwd_context = CryptContext(schemes=["bcrypt"], deprecated="auto")
 
@@ -113,6 +113,16 @@ required_fields_by_role = {
                    "account_number",
                    "bank_name"
                    ], 
+    "lawyer"     : ["username", 
+                   "id_number", 
+                   "phone",
+                   "user_city", 
+                   "user_department", 
+                   "tax_id",
+                   "account_type",
+                   "account_number",
+                   "bank_name"
+                   ], 
     "lender"    : ["username", 
                    "id_number",
                    "phone", 
@@ -149,7 +159,7 @@ def create_temp_password(username):
 
 @router.post("/user/create/")  # LOGS
 async def create_user(user_in: UserIn, db: Session = Depends(get_db)):
-    allowed_roles = ["admin", "lender", "debtor", "agent"]  
+    allowed_roles = ["admin", "lender", "debtor", "agent", "lawyer"]  
     
     if user_in.role.lower() not in allowed_roles:
         raise HTTPException(status_code=400, detail="Invalid role. Allowed roles are: admin, lender, debtor, agent")
@@ -426,102 +436,145 @@ async def auth_user(user_au: UserAuth, db: Session = Depends(get_db)):
 
 
 @router.get("/user/perfil/{user_info_ask}")  # LOGS
-async def get_mi_perfil(user_info_ask: str, db: Session = Depends(get_db)):
-    print(str(user_info_ask))
+async def get_mi_perfil(user_info_ask: str, db: Session = Depends(get_db), token: str = Header(None)):
+    
+    # Decodificar el token y obtener la información del usuario
+    decoded_token       = decode_jwt(token)
+    user_id_from_token  = decoded_token.get("id")
+    role_from_token     = decoded_token.get("role")
+
+    # Validar que el id en el token coincida con el solicitado o que sea admin
+    if user_info_ask != user_id_from_token and role_from_token != "admin":
+        raise HTTPException(status_code=403, detail="No tienes acceso a este perfil")
+
+    # Obtener información del usuario en la base de datos
     user_info = db.query(UserInDB).filter_by(id_number=user_info_ask).first()
     if not user_info:
         raise HTTPException(status_code=404, detail="El usuario no existe")
-    
+
+    # Obtener documentos asociados al usuario
     user_files = db.query(File).filter(File.entity_id == user_info.id).all()
     documents_status = {
-        "cedula_front": None,
-        "cedula_back": None,
-        "tax_id_file": None,
+        "cedula_front"      : None,
+        "cedula_back"       : None,
+        "tax_id_file"       : None,
         "bank_certification": None,
-        "profile_picture": None
+        "profile_picture"   : None,
+        "professional_card" : None  # Agregamos la tarjeta profesional para los abogados
     }
 
-    # Generate presigned URLs for each file
+    # Generar URLs prefirmadas para cada documento si existen
     for file in user_files:
         if file.file_type in documents_status:
             presigned_url = generate_presigned_url(file.file_location, expiration=3600)
             documents_status[file.file_type] = {
-                "uploaded": presigned_url is not None,
-                "path": presigned_url
+                "uploaded"  : presigned_url is not None,
+                "path"      : presigned_url
             }
 
+    # Crear el diccionario con la información del usuario y documentos
     user_info_dict = {
         "username"         : user_info.username,
+        "id_number"        : user_info.id_number,
+        "civil_status"     : user_info.civil_status, 
         "email"            : user_info.email,
         "phone"            : user_info.phone,
         "legal_address"    : user_info.legal_address,
         "user_city"        : user_info.user_city,
         "user_department"  : user_info.user_department,
-        "id_number"        : user_info.id_number,
         "tax_id"           : user_info.tax_id,
         "bank_name"        : user_info.bank_name,
         "account_type"     : user_info.account_type,
-        "civil_status"     : user_info.civil_status, 
         "account_number"   : user_info.account_number,
         "documents": [
             {"name": "Cedula cara frontal", "key": "cedula_front", "uploaded": documents_status["cedula_front"] is not None, "path": documents_status["cedula_front"]["path"] if documents_status["cedula_front"] else None},
             {"name": "Cedula cara posterior", "key": "cedula_back", "uploaded": documents_status["cedula_back"] is not None, "path": documents_status["cedula_back"]["path"] if documents_status["cedula_back"] else None},
             {"name": "Rut", "key": "tax_id_file", "uploaded": documents_status["tax_id_file"] is not None, "path": documents_status["tax_id_file"]["path"] if documents_status["tax_id_file"] else None},
-            {"name": "Certificacion bancaria", "key": "bank_certification", "uploaded": documents_status["bank_certification"] is not None, "path": documents_status["bank_certification"]["path"] if documents_status["bank_certification"] else None},
-            {"name": "Foto de Perfil", "key": "profile_picture", "uploaded": documents_status["profile_picture"] is not None, "path": documents_status["profile_picture"]["path"] if documents_status["profile_picture"] else None}
+            {"name": "Certificación bancaria", "key": "bank_certification", "uploaded": documents_status["bank_certification"] is not None, "path": documents_status["bank_certification"]["path"] if documents_status["bank_certification"] else None},
+            {"name": "Foto de Perfil", "key": "profile_picture", "uploaded": documents_status["profile_picture"] is not None, "path": documents_status["profile_picture"]["path"] if documents_status["profile_picture"] else None},
+            {"name": "Tarjeta Profesional", "key": "professional_card", "uploaded": documents_status["professional_card"] is not None, "path": documents_status["professional_card"]["path"] if documents_status["professional_card"] else None}
         ]
     }
 
+    if role_from_token == "admin":
+        user_info_dict.update({
+            "role"  : user_info.role
+        })
+    
     return user_info_dict
 
 
-@router.post("/user/info/")  #LOGS #TOKEN
+@router.post("/user/info/")  # LOGS # TOKEN
 async def get_user_info(user_info_ask: UserInfoAsk, db: Session = Depends(get_db), 
-    token: str = Header(None)):
+                        token: str = Header(None)):
 
     decoded_token = decode_jwt(token)
     role_from_token = decoded_token.get("role")
-        
-    if role_from_token != "admin":
-        raise HTTPException(status_code=403, detail="No tienes permiso de ver esta informacion")
+
+    # Validar permisos
+    if role_from_token not in ["admin", "agent", "lawyer"]:
+        raise HTTPException(status_code=403, detail="No tienes permiso de ver esta información")
 
     user = db.query(UserInDB).filter_by(id_number=user_info_ask.id_number).first()
     if not user:
-        raise HTTPException(status_code=404, detail="User not found")
+        raise HTTPException(status_code=404, detail="Usuario no encontrado")
 
     role = user.role
-    mortgages   = 0 
-    total_debt  = 0
-    lendings    = 0 
-    invested    = 0
-    
+    mortgages = 0
+    total_debt = 0
+    lendings = 0
+    invested = 0
+
+    # Lógica para el rol "debtor"
     if role == "debtor":
         mortgages_query = db.query(MortgageInDB).filter_by(debtor_id=user.id_number).all()
-        mortgages       = len(mortgages_query)
-        total_debt      = sum(mortgage.initial_balance for mortgage in mortgages_query)
+        mortgages = len(mortgages_query)
+        total_debt = sum(mortgage.initial_balance for mortgage in mortgages_query)
 
         return {
-        "role"              : role,
-        "username"          : user.username,
-        "email"             : user.email,
-        "phone"             : user.phone,
-        "mortgages"         : mortgages,
-        "total_debt"        : total_debt,
-    }
-
-    elif role == "lender":
-        lendings_query  = db.query(MortgageInDB).filter_by(lender_id=user.id_number).all()
-        lendings        = len(lendings_query)
-        invested        = sum(mortgage.initial_balance for mortgage in lendings_query)
-
-        return {
-        "role"              : role,
-        "username"          : user.username,
-        "email"             : user.email,
-        "phone"             : user.phone,
-        "lendings"          : lendings,
-        "invested"          : invested
+            "role": role,
+            "username": user.username,
+            "email": user.email,
+            "phone": user.phone,
+            "mortgages": mortgages,
+            "total_debt": total_debt,
         }
+
+    # Lógica para el rol "lender"
+    elif role == "lender":
+        lendings_query = db.query(MortgageInDB).filter_by(lender_id=user.id_number).all()
+        lendings = len(lendings_query)
+        invested = sum(mortgage.initial_balance for mortgage in lendings_query)
+
+        return {
+            "role": role,
+            "username": user.username,
+            "email": user.email,
+            "phone": user.phone,
+            "lendings": lendings,
+            "invested": invested,
+        }
+
+    # Lógica para el rol "agent"
+    elif role == "agent":
+
+        return {
+            "role": role,
+            "username": user.username,
+            "email": user.email,
+            "phone": user.phone,
+        }
+
+    # Lógica para el rol "lawyer"
+    elif role == "lawyer":
+
+        return {
+            "role": role,
+            "username": user.username,
+            "email": user.email,
+            "phone": user.phone
+        }
+
     
 
 @router.get("/admin_panel/users/")  # Logs for Admin and Agent, token required
@@ -553,7 +606,7 @@ async def get_all_users(
             })
         return user_info
 
-    elif role == "agent":
+    elif role == "agent" or role == "lawyer":
         # Retrieve users added by the agent
         last_logs_count = db.query(LogsInDb).filter(LogsInDb.user_id == user_id).count()
         # Si el usuario tiene menos de 3 registros, lo consideramos su primera vez
@@ -606,7 +659,7 @@ async def get_all_users(
     role    = decoded_token.get("role")
     user_pk = decoded_token.get("pk")  # Added primary key of the agent
 
-    if role == "agent" or "admin":
+    if role == "agent" or "admin" or "lawyer":
         users_added_by_agent = db.query(UserInDB).filter(UserInDB.added_by == user_pk).all()
         user_info = []
         for user in users_added_by_agent:
@@ -746,6 +799,7 @@ async def update_user_info(
     cedula_back         : UploadFile = FastAPIFile(None),
     bank_certification  : UploadFile = FastAPIFile(None), 
     profile_picture     : UploadFile = FastAPIFile(None),
+    professional_card   : UploadFile = FastAPIFile(None),  # Nuevo campo para abogados
     user_data           : str = Form(...),
     db                  : Session = Depends(get_db),
     token               : str = Header(None)
@@ -776,12 +830,14 @@ async def update_user_info(
 
     # Update user information based on data
     user.legal_address  = data.get('legal_address', user.legal_address)
+    user.phone          = data.get('phone', user.phone)
     user.user_city      = data.get('user_city', user.user_city)
     user.user_department= data.get('user_department', user.user_department) 
     user.account_type   = data.get('account_type', user.account_type)
     user.account_number = data.get('account_number', user.account_number)
     user.bank_name      = data.get('bank_name', user.bank_name)
     user.tax_id         = data.get('tax_id', user.tax_id)
+    user.civil_status   = data.get('civil_status', user.civil_status)
 
     # Process and save files
     files = {
@@ -789,7 +845,8 @@ async def update_user_info(
         "cedula_front"      : cedula_front,
         "cedula_back"       : cedula_back,
         "bank_certification": bank_certification,
-        "profile_picture"   : profile_picture
+        "profile_picture"   : profile_picture,
+        "professional_card" : professional_card 
     }
     s3_bucket_name = 'actyfiles'
     for file_key, file in files.items():
@@ -923,3 +980,53 @@ async def update_password(email: str, password_change: PasswordChange, db: Sessi
     new_token = create_access_token(db_user.username, db_user.role, str(db_user.id_number), db_user.id, user_status)
 
     return {"message": "Tu contraseña se ha cambiado exitosamente", "new_token": new_token}
+
+@router.put("/user/update/{id_number}")
+async def update_user_info(
+    id_number: str,
+    user_data: dict,  # Esperamos los datos de usuario como un diccionario
+    token: str = Header(None),  # Recibimos el token en los headers
+    db: Session = Depends(get_db)
+):
+    # Decodificamos el token para obtener la información del usuario
+    decoded_token = decode_jwt(token)
+    user_id_from_token = decoded_token.get("id")
+    role_from_token = decoded_token.get("role")
+
+    # Validamos si el usuario tiene permiso (admin o el propio usuario)
+    if user_id_from_token != id_number and role_from_token != "admin":
+        raise HTTPException(status_code=403, detail="No tienes permisos para realizar esta acción")
+
+    # Buscamos el usuario en la base de datos
+    user = db.query(UserInDB).filter_by(id_number=id_number).first()
+    if not user:
+        raise HTTPException(status_code=404, detail="Usuario no encontrado")
+
+    # Actualizamos los campos del usuario según los datos recibidos
+    if "username" in user_data:
+        user.username = user_data["username"]
+    if "id_number" in user_data:
+        user.id_number = user_data["id_number"]
+    if "email" in user_data:
+        user.email = user_data["email"]
+    if "phone" in user_data: 
+        user.phone = user_data["phone"]
+    if "legal_address" in user_data:
+        user.legal_address = user_data["legal_address"]
+    if "user_city" in user_data:
+        user.user_city = user_data["user_city"]
+    if "user_department" in user_data:
+        user.user_department = user_data["user_department"]
+    if "tax_id" in user_data:
+        user.tax_id = user_data["tax_id"]
+    if "bank_name" in user_data:
+        user.bank_name = user_data["bank_name"]
+    if "account_type" in user_data:
+        user.account_type = user_data["account_type"]
+    if "account_number" in user_data:
+        user.account_number = user_data["account_number"]
+
+    # Guardamos los cambios en la base de datos
+    db.commit()
+
+    return {"message": "Información actualizada correctamente", "user_data": user_data}

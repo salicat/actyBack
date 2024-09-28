@@ -89,7 +89,7 @@ class MortgageInDB(Base):
     lender_id       = Column(String, ForeignKey("users.id_number"))
     debtor_id       = Column(String, ForeignKey("users.id_number"))
     agent_id        = Column(String, ForeignKey("users.id_number"), nullable=True)
-    matricula_id    = Column(String)
+    matricula_id    = Column(String) 
     start_date      = Column(Date)
     initial_balance = Column(BigInteger)
     interest_rate   = Column(Float)
@@ -230,7 +230,7 @@ class MortgageRegsInDb(Base):
     previous_balance = Column(BigInteger)
     new_balance      = Column(BigInteger)
     date            = Column(Date)
-    amount          = Column(BigInteger)
+    amount          = Column(BigInteger) 
     concept         = Column(String)
     comprobante     = Column(String)
     comment         = Column(String)
@@ -263,5 +263,14 @@ class CompanyRegsInDb(Base):   #to Track business incomes and expenses
     rel_entity_id       = Column(Integer)  
     rel_entity_type     = Column(String)  
     comprobante         = Column(String)  
+    
+class HelpRequestInDb(Base):
+    __tablename__ = "help_requests"
+    id      = Column(Integer, primary_key=True, autoincrement=True)
+    fecha   = Column(Date, nullable=False)
+    mensaje = Column(String, nullable=False)
+    motivo  = Column(String, nullable=False)
+    usuario = Column(String, nullable=False)  # No se crea relación, solo se almacena como texto
+    status  = Column(String, nullable=False)
     
 Base.metadata.create_all(bind=engine)
