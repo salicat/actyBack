@@ -171,6 +171,7 @@ class ComisionsInDb(Base):   #Set comisions, make a component to make the calcul
     __tablename__ = "comisions"
     id              = Column(Integer, primary_key=True, autoincrement=True)
     concept         = Column(String)
+    status          = Column(String) #generated, authorized, paid 
     value           = Column(Float) #this is a percentage
     date            = Column(Date)
     rel_entity_type = Column(String)  #AGENT LOAN, AGENT INVESTOR, AFFILIATE MARKETER...
@@ -248,7 +249,7 @@ class LawyerRegsInDb(Base): #to track lawyers comissions
     concept             = Column(String)
     comprobante         = Column(String)
     comment             = Column(String)
-    
+
 
 class CompanyRegsInDb(Base):   #to Track business incomes and expenses
     __tablename__ = "company_transactions"

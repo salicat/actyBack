@@ -110,13 +110,14 @@ def generate_presigned_url(object_name, expiration=3600):
 
 @router.post("/property/create/", response_model=PropCreate) 
 async def create_property(
-    tax_document    : UploadFile            = FastAPIFile(...), 
-    property_photo  : List[UploadFile]      = FastAPIFile(...),
-    property_ctl    : UploadFile            = FastAPIFile(...), 
-    additional_docs : Optional[List[UploadFile]]  = FastAPIFile(None),
-    property_data   : str                   = Form(...),
-    db              : Session               = Depends(get_db), 
-    token           : str                   = Header(None)
+    tax_document    : UploadFile                    = FastAPIFile(...), 
+    property_photo  : List[UploadFile]              = FastAPIFile(...),
+    property_ctl    : UploadFile                    = FastAPIFile(...), 
+    apply_form      : UploadFile                    = FastAPIFile(...),  # Añadido aquí
+    additional_docs : Optional[List[UploadFile]]    = FastAPIFile(None),
+    property_data   : str                           = Form(...),
+    db              : Session                       = Depends(get_db), 
+    token           : str                           = Header(None)
 ):
     try:
         # Load property data from form
@@ -140,10 +141,11 @@ async def create_property(
         s3_bucket_name = 'actyfiles'
         file_keys = {}
         files = {
-            'tax_document'  : tax_document,
-            'property_photo': property_photo,
-            'property_ctl'  : property_ctl,
-            'additional_docs': additional_docs  # Añadimos los documentos adicionales
+            'tax_document'      : tax_document,
+            'property_photo'    : property_photo,
+            'property_ctl'      : property_ctl,
+            'apply_form'        : apply_form, 
+            'additional_docs'   : additional_docs  # Añadimos los documentos adicionales
         }
 
         # Cargar archivos y recopilar claves
