@@ -76,7 +76,7 @@ def generate_presigned_url(bucket_name, object_name, expiration=3600):
 
 @router.get("/loan_progress/applications/")
 async def get_loan_applications(db: Session = Depends(get_db), token: str = Header(None)):
-    
+
     if not token:
         raise HTTPException(status_code=401, detail="Token not provided")
 
@@ -94,12 +94,23 @@ async def get_loan_applications(db: Session = Depends(get_db), token: str = Head
     applications = []
 
     if role_from_token == "admin":
-        # Si es admin, obtiene todas las solicitudes de crédito
+        # Si es admin, obtiene todas las solicitudes de crédito y agrupa por property_id,
+        # obteniendo solo la más reciente (basada en el id más alto)
         applications = (
             db.query(LoanProgress)
-            .order_by(LoanProgress.date.desc())
+            .order_by(LoanProgress.property_id, LoanProgress.id.desc())
             .all()
         )
+
+        # Crear un diccionario para mantener la solicitud más reciente de cada propiedad
+        recent_applications = {}
+        for app in applications:
+            if app.property_id not in recent_applications:
+                recent_applications[app.property_id] = app  # Solo almacenar la primera ocurrencia (la más reciente)
+    
+        # Aplicar el diccionario a la lista de aplicaciones
+        applications = list(recent_applications.values())
+
     elif role_from_token in ["agent", "lawyer"]:
         # Obtener todos los usuarios añadidos por el agente/abogado
         agent_users = db.query(UserInDB.id_number).filter(UserInDB.added_by == user_pk_from_token).all()
@@ -110,18 +121,28 @@ async def get_loan_applications(db: Session = Depends(get_db), token: str = Head
             agent_properties = db.query(PropInDB.id).filter(PropInDB.owner_id.in_(user_ids)).all()
             property_ids = [prop.id for prop in agent_properties]
 
-            # Obtener las solicitudes de crédito más recientes para esos usuarios
+            # Obtener las solicitudes de crédito más recientes para esas propiedades
             if property_ids:
                 applications = (
                     db.query(LoanProgress)
                     .filter(LoanProgress.property_id.in_(property_ids))
-                    .order_by(LoanProgress.date.desc())
+                    .order_by(LoanProgress.property_id, LoanProgress.id.desc())
                     .all()
                 )
 
+                # Crear un diccionario para mantener la solicitud más reciente de cada propiedad
+                recent_applications = {}
+                for app in applications:
+                    if app.property_id not in recent_applications:
+                        recent_applications[app.property_id] = app  # Solo almacenar la primera ocurrencia (la más reciente)
+                
+                # Aplicar el diccionario a la lista de aplicaciones
+                applications = list(recent_applications.values())
+
     if not applications:
         return {"message": "No tienes solicitudes aún"}
-    
+
+    # Preparar los datos para devolver
     application_data = []
     for app in applications:
         property_info = db.query(PropInDB).filter(PropInDB.id == app.property_id).first()
@@ -135,17 +156,6 @@ async def get_loan_applications(db: Session = Depends(get_db), token: str = Head
                 "last_date"     : app.date,
                 "notes"         : app.notes
             })
-
-    # Registro de la acción
-    action_description = "Loan Applications Retrieved by Admin" if role_from_token == "admin" else "Loan Applications Retrieved by Agent/Lawyer"
-    log_entry = LogsInDb(
-        action=action_description, 
-        timestamp=local_timestamp_str, 
-        message=f"Retrieved {len(application_data)} loan applications", 
-        user_id=user_id_from_token
-    )
-    db.add(log_entry)
-    db.commit()
 
     return application_data
 
@@ -179,16 +189,15 @@ async def get_loan_application_details(matricula_id: str, db: Session = Depends(
 
     # Get loan progress entries
     loan_progress_entries = db.query(LoanProgress).filter(LoanProgress.property_id == property_detail.id).all()
+    prop = db.query(PropInDB).filter(PropInDB.id == property_detail.id).first()
 
     credit_detail = [{
-        "date": entry.date,
-        "status": entry.status,
-        "notes": entry.notes, 
+        "date"      : entry.date,
+        "status"    : entry.status,
+        "notes"     : entry.notes, 
+        "evalation" : prop.evaluation,
         "updated_by": entry.updated_by
     } for entry in loan_progress_entries]
-
-    # Debug: Check what we fetch from the database
-    print(f"Fetching documents for property_id: {property_detail.id}")
     
     documents = db.query(File).filter(File.entity_type == "property", File.entity_id == property_detail.id).all()
     document_info = [{
@@ -196,8 +205,6 @@ async def get_loan_application_details(matricula_id: str, db: Session = Depends(
         "file_type": doc.file_type,
         "file_location": generate_presigned_url("actyfiles", doc.file_location) if doc.file_location else "No location found"
     } for doc in documents]
-
-    print(f"Document info: {document_info}")  # Check the output immediately
 
     # Compile property details
     property_info = {
@@ -239,19 +246,25 @@ async def update_loan_application(matricula_id: str, update_data: dict, db: Sess
     if not token:
         raise HTTPException(status_code=401, detail="Token not provided")
 
+    # Decodificación del token
     decoded_token = decode_jwt(token)
     role_from_token = decoded_token.get("role")
     user_id_from_token = decoded_token.get("id")
 
+    # Verificación de autorización
     if role_from_token is None or role_from_token not in ["admin"]:
         raise HTTPException(status_code=403, detail="Not authorized to update loan application")
 
+    # Normalización del ID de la matrícula
     normalized_input_matricula_id = ''.join(e for e in matricula_id if e.isalnum() or e in ['-']).lower()
     potential_properties = db.query(PropInDB).all()
     property_detail = next((prop for prop in potential_properties if ''.join(e for e in prop.matricula_id if e.isalnum() or e in ['-']).lower() == normalized_input_matricula_id), None)
+    
+    # Verificación de existencia de la propiedad
     if not property_detail:
         raise HTTPException(status_code=404, detail="Property not found")
 
+    # Actualización de estado
     status = update_data.get("status", "")
     notes = update_data.get("notes", "")
     score = update_data.get("score", None)
@@ -260,15 +273,15 @@ async def update_loan_application(matricula_id: str, update_data: dict, db: Sess
         if status == "analisis deudor en proceso":
             property_detail.comments = "analysis"
             if score is not None:
-                # Ensure we're looking up the user based on id_number as mentioned
                 user = db.query(UserInDB).filter(UserInDB.id_number == property_detail.owner_id).first()
                 if user:
-                    user.score = score  # Update the user's score
+                    user.score = score  # Actualización del score del usuario
         elif status == "analisis de garantia":
             property_detail.comments = "concept"
         elif status == "Tasa de Interes fijada":
             property_detail.comments = "result"
 
+    # Actualización de tasa propuesta y evaluación
     rate_proposed = update_data.get("rate_proposed")
     if rate_proposed is not None:
         property_detail.rate_proposed = rate_proposed
@@ -277,13 +290,24 @@ async def update_loan_application(matricula_id: str, update_data: dict, db: Sess
     if evaluation:
         property_detail.evaluation = evaluation
 
-    # Fetch owner email
+    # Actualización del estado final de la propiedad (aprobado o rechazado)
+    final_status = update_data.get("final_status")
+    if final_status == "rejected":
+        # Si el estado final es rechazado, actualiza el campo study y comments
+        property_detail.study = "rejected"
+        # Actualiza el campo comments con "Solicitud negada: " seguido del comentario de evaluación
+        property_detail.comments = f"Solicitud negada: {evaluation}" if evaluation else "Solicitud negada: Sin comentarios"
+
+    elif final_status == "approved":
+        # Si el estado final es aprobado, simplemente actualiza el campo study
+        property_detail.study = "approved"
+    
+    # Envío de correo electrónico
     owner = db.query(UserInDB).filter(UserInDB.id_number == property_detail.owner_id).first()
     if not owner:
         raise HTTPException(status_code=404, detail="Owner not found")
+    
     owner_email = owner.email
-
-    final_status = update_data.get("final_status")
     if final_status:
         if final_status in ["approved", "rejected"]:
             #send email to username with email + temp_password
@@ -329,29 +353,28 @@ async def update_loan_application(matricula_id: str, update_data: dict, db: Sess
                     msg.attach(part1)
                     msg.attach(part2)
                     server.sendmail(sender_email, receiver_email, msg.as_string())
-            
-    db.add(property_detail)
-    
-    
 
+    # Registro del progreso del préstamo
+    db.add(property_detail)
     new_loan_progress = LoanProgress(
         property_id = property_detail.id, 
-        date        = local_timestamp_str, 
-        status      = status, 
-        user_id     = property_detail.owner_id,
-        notes       = notes,  
-        updated_by  = user_id_from_token
+        date = local_timestamp_str, 
+        status = status, 
+        user_id = property_detail.owner_id,
+        notes = notes,  
+        updated_by = user_id_from_token
     )
     db.add(new_loan_progress)
 
+    # Registro de logs
     log_entry = LogsInDb(
-        action      = "Loan Application Updated", 
-        timestamp   = local_timestamp_str, 
-        message     = f"Updated loan application for matricula_id: {matricula_id} with status: {status}", 
-        user_id     = user_id_from_token
+        action = "Loan Application Updated", 
+        timestamp = local_timestamp_str, 
+        message = f"Updated loan application for matricula_id: {matricula_id} with status: {status}", 
+        user_id = user_id_from_token
     )
     db.add(log_entry)
 
-    db.commit()  # This should commit all changes including the user score update.
+    db.commit()  # Confirma todos los cambios en la base de datos
 
     return {"message": "Loan application updated successfully"}

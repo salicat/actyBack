@@ -112,8 +112,8 @@ def generate_presigned_url(object_name, expiration=3600):
 async def create_property(
     tax_document    : UploadFile                    = FastAPIFile(...), 
     property_photo  : List[UploadFile]              = FastAPIFile(...),
-    property_ctl    : UploadFile                    = FastAPIFile(...), 
-    apply_form      : UploadFile                    = FastAPIFile(...),  # Añadido aquí
+    property_ctl    : UploadFile                    = FastAPIFile(None), 
+    apply_form      : UploadFile                    = FastAPIFile(None),  
     additional_docs : Optional[List[UploadFile]]    = FastAPIFile(None),
     property_data   : str                           = Form(...),
     db              : Session                       = Depends(get_db), 
