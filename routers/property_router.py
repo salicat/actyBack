@@ -296,7 +296,7 @@ def retrieve_property(id_number: str, db: Session = Depends(get_db)):
     return {"properties" : user_properties, "mortgages" : user_mortgages} 
 
 
-@router.get("/properties/{status}")  # LOGS #TOKEN-ROLE # posted, selected, funded, mortgage
+@router.get("/properties/{status}")
 def get_properties_by_status(status: str, db: Session = Depends(get_db), token: str = Header(None)):
     if not token:
         raise HTTPException(status_code=401, detail="Token not provided")
@@ -311,9 +311,8 @@ def get_properties_by_status(status: str, db: Session = Depends(get_db), token: 
         raise HTTPException(status_code=403, detail="No tienes permiso para ver propiedades por estado")
 
     properties_data = []
-    processed_property_ids = set()  # To track properties already added
+    processed_property_ids = set()
 
-    # Handling different statuses without making new imports
     if status == 'analysis':
         query_status = 'study' if status == 'analysis' else 'approved'
         properties = db.query(PropInDB).filter(PropInDB.study == query_status).all()
@@ -327,42 +326,55 @@ def get_properties_by_status(status: str, db: Session = Depends(get_db), token: 
 
     for property in properties:
         if property.matricula_id in processed_property_ids:
-            continue  # Skip this property as it has already been processed
+            continue
 
         owner_details = db.query(UserInDB.username, UserInDB.score).filter(UserInDB.id_number == property.owner_id).first()
 
-        property_photo = db.query(File).filter_by(entity_type='property', entity_id=property.id, file_type='property_photo').first()
-        property_photo_url = generate_presigned_url(property_photo.file_location) if property_photo else None
+        # Obtener todas las fotos asociadas a la propiedad
+        property_photos = db.query(File).filter(File.entity_type == 'property', File.entity_id == property.id, File.file_type.like('property_photo%')).all()
+        
+        # Validar si hay fotos
+        if property_photos:
+            # Generar URLs firmadas para todas las fotos
+            property_photos_urls = [generate_presigned_url(photo.file_location) for photo in property_photos]
+            # La primera foto será la de portada
+            property_cover_photo = property_photos_urls[0] if property_photos_urls else None
+        else:
+            property_photos_urls = None
+            property_cover_photo = None
         
         property_data = {
-            "id": property.id,
-            "matricula_id": property.matricula_id,
-            "address": property.address,
-            "neighbourhood": property.neighbourhood,
-            "city": property.city,
-            "department": property.department,
-            "strate": property.strate,
-            "area": property.area,
-            "type": property.type,
-            "tax_valuation": property.tax_valuation,
+            "id"            : property.id,
+            "matricula_id"  : property.matricula_id,
+            "address"       : property.address,
+            "neighbourhood" : property.neighbourhood,
+            "city"          : property.city,
+            "department"    : property.department,
+            "strate"        : property.strate,
+            "area"          : property.area,
+            "type"          : property.type,
+            "tax_valuation" : property.tax_valuation,
             "loan_solicited": property.loan_solicited,
-            "rate_proposed": property.rate_proposed,
-            "evaluation": property.evaluation,
-            "prop_status": property.prop_status,
-            "prop_study": property.study,
-            "comments": property.comments,
-            "property_photo": property_photo_url,
+            "rate_proposed" : property.rate_proposed,
+            "evaluation"    : property.evaluation,
+            "prop_status"   : property.prop_status,
+            "prop_study"    : property.study,
+            "comments"      : property.comments,
+            "property_photo": property_cover_photo,  # Foto de portada
+            "property_photos": property_photos_urls,  # Todas las fotos
             "owner_username": owner_details.username if owner_details else None,
-            "owner_score": owner_details.score if owner_details else None
+            "owner_score"   : owner_details.score if owner_details else None
         }
 
         properties_data.append(property_data)
-        processed_property_ids.add(property.matricula_id)  # Mark this property as processed
+        processed_property_ids.add(property.matricula_id)
 
     if not properties_data:
-        return {"message" : "No hay Activos Disponibles"}
+        return {"message": "No hay Activos Disponibles"}
 
     return properties_data
+
+
 
 #PUBLIC ENDOPOINT
 
@@ -386,17 +398,17 @@ def get_properties_by_referral(referralId: str, db: Session = Depends(get_db)):
         property_photo_url = generate_presigned_url(property_photo.file_location) if property_photo else None
 
         properties_data.append({
-            "id": property.id,
-            "address": property.address,
-            "city": property.city,
-            "department": property.department,
-            "area": property.area,
-            "type": property.type,
-            "tax_valuation": property.tax_valuation,
+            "id"            : property.id,
+            "address"       : property.address,
+            "city"          : property.city,
+            "department"    : property.department,
+            "area"          : property.area,
+            "type"          : property.type,
+            "tax_valuation" : property.tax_valuation,
             "loan_solicited": property.loan_solicited,
-            "rate_proposed": property.rate_proposed,
-            "prop_status": property.prop_status,
-            "comments": property.comments,
+            "rate_proposed" : property.rate_proposed,
+            "prop_status"   : property.prop_status,
+            "comments"      : property.comments,
             "property_photo": property_photo_url  # Use the photo_location variable here
         })
 
@@ -410,16 +422,16 @@ def get_properties_by_referral(referralId: str, db: Session = Depends(get_db)):
 def get_properties_by_status(db: Session = Depends(get_db), token: str = Header(None)):
     if not token:
         log_entry = LogsInDb(
-            action="User Alert",
-            timestamp=local_timestamp_str,
-            message="Unauthorized attempt to access properties by status (Token not provided)",
-            user_id=None
+            action      = "User Alert",
+            timestamp   = local_timestamp_str,
+            message     = "Unauthorized attempt to access properties by status (Token not provided)",
+            user_id     = None
         )
         db.add(log_entry)
         db.commit()
         raise HTTPException(status_code=401, detail="Token not provided")
 
-    decoded_token = decode_jwt(token)
+    decoded_token   = decode_jwt(token)
     role_from_token = decoded_token.get("role")
 
     if role_from_token is None:
@@ -887,21 +899,33 @@ def propdetails(prop_id: int, db: Session = Depends(get_db)):
     if not owner_detail:
         raise HTTPException(status_code=404, detail="Owner not found")
 
+    # Obtener todas las fotos asociadas a la propiedad
+    property_photos = db.query(File).filter(File.entity_type == 'property', File.entity_id == property_detail.id, File.file_type.like('property_photo%')).all()
+    
+    # Validar si hay fotos
+    if property_photos:
+        # Generar URLs firmadas para todas las fotos
+        property_photos_urls = [generate_presigned_url(photo.file_location) for photo in property_photos]
+    else:
+        property_photos_urls = None
+
     loan_details = db.query(LoanProgress).filter(property_detail.id == LoanProgress.property_id).all()[-1]
 
     # Construct the response dictionary
     property_data = {
-        "id"            : property_detail.id,
-        "tax_valuation" : property_detail.tax_valuation,
-        "rate_proposed" : property_detail.rate_proposed,
+        "id": property_detail.id,
+        "tax_valuation": property_detail.tax_valuation,
+        "rate_proposed": property_detail.rate_proposed,
         "loan_solicited": property_detail.loan_solicited,
-        "estrato"       : property_detail.strate,
-        "area"          : property_detail.area,
-        "type"          : property_detail.type,
-        "city"          : property_detail.city,
-        "department"    : property_detail.department,
-        "score"         : owner_detail.score,
-        "comments"      : loan_details.notes
+        "estrato": property_detail.strate,
+        "area": property_detail.area,
+        "type": property_detail.type,
+        "city": property_detail.city,
+        "evaluation": property_detail.evaluation,
+        "department": property_detail.department,
+        "score": owner_detail.score,
+        "comments": loan_details.notes,
+        "property_photos": property_photos_urls  
     }
 
     return property_data

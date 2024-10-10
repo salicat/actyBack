@@ -58,7 +58,7 @@ def get_commissions(db: Session = Depends(get_db), token: str = Header(None)):
         raise HTTPException(status_code=403, detail="Token is missing or invalid")
 
     # Si el rol es admin o agent, obtener todas las comisiones
-    if role in ["admin", "agent"]:
+    if role in ["admin", "agent", "lawyer"]:
         commissions = db.query(ComisionsInDb).filter(ComisionsInDb.status == "Vigente").all()  # Solo comisiones vigentes
     else:
         # No estamos manejando aún usuarios normales, por lo que devolvemos un error
