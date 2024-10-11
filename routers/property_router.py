@@ -377,10 +377,28 @@ def get_properties_by_status(status: str, db: Session = Depends(get_db), token: 
 
 
 #PUBLIC ENDOPOINT
-
 @router.get("/public-properties/{referralId}")
 def get_properties_by_referral(referralId: str, db: Session = Depends(get_db)):
+    # Verificación del referralId: el id debe aparecer al principio y al final del referralId.
+    user_id = None
+    user_id_number = None
 
+    # Buscar el id tanto al inicio como al final del referralId
+    for i in range(1, len(referralId) // 2 + 1):
+        user_id = referralId[:i]  # Tomamos la parte del id desde el principio
+        if referralId.endswith(user_id):  # Verificamos si el id coincide al final
+            user_id_number = referralId[i:-i]  # El número del medio es el id_number
+            break
+    else:
+        raise HTTPException(status_code=400, detail="Invalid referralId format")
+
+    # No convertir user_id_number a entero ya que en la base de datos es de tipo 'character varying'
+    user = db.query(UserInDB).filter(UserInDB.id == int(user_id), UserInDB.id_number == user_id_number).first()
+    
+    if not user:
+        raise HTTPException(status_code=404, detail="Invalid referralId or user not found")
+
+    # Filtramos las propiedades con estatus 'available' y comentarios 'approved'
     properties = db.query(PropInDB).filter(
         PropInDB.prop_status == 'available',
         PropInDB.comments == 'approved'
@@ -388,13 +406,14 @@ def get_properties_by_referral(referralId: str, db: Session = Depends(get_db)):
     
     properties_data = []
     for property in properties:
-        property_photo = db.query(File).filter_by(
-            entity_type='property',
-            entity_id=property.id,
-            file_type='property_photo'
+        # Obtenemos solo la primera imagen de portada con un filtro para 'property_photo_0'
+        property_photo = db.query(File).filter(
+            File.entity_type == 'property',
+            File.entity_id == property.id,
+            File.file_type == 'property_photo_0'  # Aquí estamos filtrando específicamente la foto de portada
         ).first()
 
-        # Ensure that property_photo is not None before accessing its attributes
+        # Generamos la URL firmada si se encuentra una imagen
         property_photo_url = generate_presigned_url(property_photo.file_location) if property_photo else None
 
         properties_data.append({
@@ -409,13 +428,15 @@ def get_properties_by_referral(referralId: str, db: Session = Depends(get_db)):
             "rate_proposed" : property.rate_proposed,
             "prop_status"   : property.prop_status,
             "comments"      : property.comments,
-            "property_photo": property_photo_url  # Use the photo_location variable here
+            "property_photo": property_photo_url  # Solo la URL de la imagen de portada
         })
 
     if not properties_data:
         return {"message": "No properties available for this referral"}
 
     return properties_data
+
+
 
 
 @router.get("/admin/properties/")   #LOGS #TOKEN-ROLE # posted, selected, funded, mortgage
