@@ -5,9 +5,9 @@ from typing import Optional
  
 class RegCreate(BaseModel):
     mortgage_id     : int 
-    lender_id       : Optional [str]= None
+    lender_id       : Optional [str]= None 
     debtor_id       : Optional [str]= None
-    date            : date
+    date            : date 
     concept         : Optional [str]= None
     amount          : int
     penalty         : Optional [int]= None

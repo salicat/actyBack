@@ -36,9 +36,9 @@ load_dotenv()
 smtp_host = os.getenv('MAILERTOGO_SMTP_HOST')
 smtp_user = os.getenv('MAILERTOGO_SMTP_USER')
 smtp_password = os.getenv('MAILERTOGO_SMTP_PASSWORD')
-server = SMTP(smtp_host, 587)  
-server.starttls() 
-server.login(smtp_user, smtp_password) 
+# server = SMTP(smtp_host, 587)  
+# server.starttls() 
+# server.login(smtp_user, smtp_password) 
 
 AWS_ACCESS_KEY_ID = os.getenv('AWS_ACCESS_KEY_ID')
 AWS_SECRET_ACCESS_KEY = os.getenv('AWS_SECRET_ACCESS_KEY')
@@ -362,18 +362,18 @@ async def create_affiliate_user(
     """
 
 
-    with smtplib.SMTP(smtp_host, 587) as server:
-            server.starttls()
-            server.login(smtp_user, smtp_password) 
-            msg = MIMEMultipart('alternative')
-            msg['Subject'] = subject
-            msg['From'] = sender_email
-            msg['To'] = receiver_email
-            part1 = MIMEText(body, 'plain')
-            part2 = MIMEText(body_html, 'html')
-            msg.attach(part1)
-            msg.attach(part2)
-            server.sendmail(sender_email, receiver_email, msg.as_string())
+    # with smtplib.SMTP(smtp_host, 587) as server:
+    #         server.starttls()
+    #         server.login(smtp_user, smtp_password) 
+    #         msg = MIMEMultipart('alternative')
+    #         msg['Subject'] = subject
+    #         msg['From'] = sender_email
+    #         msg['To'] = receiver_email
+    #         part1 = MIMEText(body, 'plain')
+    #         part2 = MIMEText(body_html, 'html')
+    #         msg.attach(part1)
+    #         msg.attach(part2)
+    #         server.sendmail(sender_email, receiver_email, msg.as_string())
 
     if token:
         log_entry = LogsInDb(
@@ -932,20 +932,20 @@ async def check_mail(email: str, db: Session = Depends(get_db)):
         </html>
         """
 
-        with smtplib.SMTP(smtp_host, 587) as server:
-            server.starttls()
-            server.login(smtp_user, smtp_password) 
-            msg = MIMEMultipart('alternative')
-            msg['Subject'] = subject
-            msg['From'] = sender_email
-            msg['To'] = receiver_email
-            part1 = MIMEText(body, 'plain')
-            part2 = MIMEText(body_html, 'html')
-            msg.attach(part1)
-            msg.attach(part2)
-            server.sendmail(sender_email, receiver_email, msg.as_string())
+        # with smtplib.SMTP(smtp_host, 587) as server:
+        #     server.starttls()
+        #     server.login(smtp_user, smtp_password) 
+        #     msg = MIMEMultipart('alternative')
+        #     msg['Subject'] = subject
+        #     msg['From'] = sender_email
+        #     msg['To'] = receiver_email
+        #     part1 = MIMEText(body, 'plain')
+        #     part2 = MIMEText(body_html, 'html')
+        #     msg.attach(part1)
+        #     msg.attach(part2)
+        #     server.sendmail(sender_email, receiver_email, msg.as_string())
 
-        return {"exists": True, "message": "A recovery email has been sent if the address is registered with us."}
+        # return {"exists": True, "message": "A recovery email has been sent if the address is registered with us."}
     
     
 @router.put("/update_password/{email}")

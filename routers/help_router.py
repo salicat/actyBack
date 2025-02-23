@@ -23,9 +23,9 @@ load_dotenv()
 smtp_host = os.getenv('MAILERTOGO_SMTP_HOST')
 smtp_user = os.getenv('MAILERTOGO_SMTP_USER')
 smtp_password = os.getenv('MAILERTOGO_SMTP_PASSWORD')
-server = SMTP(smtp_host, 587)  
-server.starttls() 
-server.login(smtp_user, smtp_password) 
+# server = SMTP(smtp_host, 587)  
+# server.starttls() 
+# server.login(smtp_user, smtp_password) 
 
 router = APIRouter()
 
@@ -164,19 +164,19 @@ def create_help_request(ticket: HelpTicket, db: Session = Depends(get_db), token
         </html>
         """
 
-        msg = MIMEMultipart('alternative')
-        msg['Subject'] = subject
-        msg['From'] = sender_email
-        msg['To'] = receiver_email
-        msg['Cc'] = cc_email
-        part1 = MIMEText(body, 'plain')
-        part2 = MIMEText(body_html, 'html')
-        msg.attach(part1)
-        msg.attach(part2)
+        # msg = MIMEMultipart('alternative')
+        # msg['Subject'] = subject
+        # msg['From'] = sender_email
+        # msg['To'] = receiver_email
+        # msg['Cc'] = cc_email
+        # part1 = MIMEText(body, 'plain')
+        # part2 = MIMEText(body_html, 'html')
+        # msg.attach(part1)
+        # msg.attach(part2)
 
         # Enviar el correo a los destinatarios
-        recipients = [receiver_email, cc_email]
-        server.sendmail(sender_email, recipients, msg.as_string())
+        # recipients = [receiver_email, cc_email]
+        # server.sendmail(sender_email, recipients, msg.as_string())
 
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"Error al enviar el correo: {str(e)}")

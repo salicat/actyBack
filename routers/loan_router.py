@@ -22,9 +22,9 @@ load_dotenv()
 smtp_host = os.getenv('MAILERTOGO_SMTP_HOST')
 smtp_user = os.getenv('MAILERTOGO_SMTP_USER')
 smtp_password = os.getenv('MAILERTOGO_SMTP_PASSWORD')
-server = SMTP(smtp_host, 587)  
-server.starttls() 
-server.login(smtp_user, smtp_password) 
+# server = SMTP(smtp_host, 587)  
+# server.starttls() 
+# server.login(smtp_user, smtp_password) 
 
 utc_now                 = utc_now = datetime.now(timezone.utc)
 utc_offset              = timedelta(hours=-5)
@@ -240,7 +240,6 @@ async def get_loan_application_details(matricula_id: str, db: Session = Depends(
     }
 
 
-
 @router.post("/loan_progress/update/{matricula_id}")
 async def update_loan_application(matricula_id: str, update_data: dict, db: Session = Depends(get_db), token: str = Header(None)):
     if not token:
@@ -341,18 +340,18 @@ async def update_loan_application(matricula_id: str, update_data: dict, db: Sess
             """
 
 
-            with smtplib.SMTP(smtp_host, 587) as server:
-                    server.starttls()
-                    server.login(smtp_user, smtp_password) 
-                    msg = MIMEMultipart('alternative')
-                    msg['Subject'] = subject
-                    msg['From'] = sender_email
-                    msg['To'] = receiver_email
-                    part1 = MIMEText(body, 'plain')
-                    part2 = MIMEText(body_html, 'html')
-                    msg.attach(part1)
-                    msg.attach(part2)
-                    server.sendmail(sender_email, receiver_email, msg.as_string())
+            # with smtplib.SMTP(smtp_host, 587) as server:
+            #         server.starttls()
+            #         server.login(smtp_user, smtp_password) 
+            #         msg = MIMEMultipart('alternative')
+            #         msg['Subject'] = subject
+            #         msg['From'] = sender_email
+            #         msg['To'] = receiver_email
+            #         part1 = MIMEText(body, 'plain')
+            #         part2 = MIMEText(body_html, 'html')
+            #         msg.attach(part1)
+            #         msg.attach(part2)
+            #         server.sendmail(sender_email, receiver_email, msg.as_string())
 
     # Registro del progreso del préstamo
     db.add(property_detail)

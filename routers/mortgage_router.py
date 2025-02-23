@@ -22,9 +22,9 @@ load_dotenv()
 smtp_host = os.getenv('MAILERTOGO_SMTP_HOST')
 smtp_user = os.getenv('MAILERTOGO_SMTP_USER')
 smtp_password = os.getenv('MAILERTOGO_SMTP_PASSWORD')
-server = SMTP(smtp_host, 587)  
-server.starttls() 
-server.login(smtp_user, smtp_password) 
+# server = SMTP(smtp_host, 587)  
+# server.starttls() 
+# server.login(smtp_user, smtp_password) 
 
 AWS_ACCESS_KEY_ID = os.getenv('AWS_ACCESS_KEY_ID')
 AWS_SECRET_ACCESS_KEY = os.getenv('AWS_SECRET_ACCESS_KEY')
@@ -182,9 +182,10 @@ def create_mortgage(mortgage_data   : MortgageCreate,
             lender_id       = lender.id_number,
             debtor_id       = debtor.id_number,
             date            = mortgage_data.start_date,
-            concept         = "Primera cuota, debito automatico",
+            concept         = "Debito automatico primera cuota",
             amount          = existing_mortgage.monthly_payment,
             penalty         = 0,
+            penalty_days    = 0,
             min_payment     = existing_mortgage.monthly_payment,
             limit_date      = mortgage_data.start_date + timedelta(days=30),  # Adjusted for clarity
             to_main_balance = 0,
@@ -206,6 +207,9 @@ def create_mortgage(mortgage_data   : MortgageCreate,
 
 @router.get("/mortgages/debtor/{debtor_id}") #LOGS 
 def get_mortgages_by_debtor(debtor_id: str, db: Session = Depends(get_db)):
+    
+    debtor_id = debtor_id.strip()
+    
     debtor = db.query(UserInDB).filter(UserInDB.id_number == debtor_id).first()
     debtor_mail = debtor.email
     
@@ -222,23 +226,35 @@ def get_mortgages_by_debtor(debtor_id: str, db: Session = Depends(get_db)):
                 "is_first_login": is_first_login
                 }
     else:
+            # Procesar información de cada hipoteca
         mortgage_info = []
-
         for mortgage in mortgages:
-            most_recent_reg = db.query(RegsInDb).filter(RegsInDb.mortgage_id == mortgage.id).order_by(desc(RegsInDb.id)).first()
+            # Obtener el registro más reciente para la hipoteca (si existe)
+            most_recent_reg = (
+                db.query(RegsInDb)
+                .filter(RegsInDb.mortgage_id == mortgage.id)
+                .order_by(desc(RegsInDb.id))
+                .first()
+            )
+
+            # Crear un diccionario base con los datos de la hipoteca
+            mortgage_data = {k: v for k, v in mortgage.__dict__.items() if k != "_sa_instance_state"}
+            
+            # Si hay un registro asociado, combinar la información
             if most_recent_reg:
-                # Start with a clean copy of mortgage.__dict__ excluding 'id'
-                mortgage_data = {k: v for k, v in mortgage.__dict__.items() if k != 'id'}
-
-                # Update with most_recent_reg.__dict__ excluding 'id'
-                reg_data = {k: v for k, v in most_recent_reg.__dict__.items() if k != 'id'}
+                reg_data = {k: v for k, v in most_recent_reg.__dict__.items() if k != "_sa_instance_state"}
                 mortgage_data.update(reg_data)
+                mortgage_data["last_registers_mortgage_id"] = most_recent_reg.mortgage_id
+            else:
+                # Si no hay registros, agregar un indicador
+                mortgage_data["last_registers_mortgage_id"] = None
+                mortgage_data["note"] = "No hay registros asociados a esta hipoteca."
 
-                # Ensure 'id' is explicitly set to mortgage's ID, not overridden
-                mortgage_data['id'] = mortgage.id
-                mortgage_data['last_registers_mortgage_id'] = most_recent_reg.mortgage_id
+            # Asegurar que el ID de la hipoteca no se sobrescriba
+            mortgage_data["id"] = mortgage.id
 
-                mortgage_info.append(mortgage_data)
+            # Agregar al arreglo
+            mortgage_info.append(mortgage_data)
 
 
         # Check for pending payments
@@ -330,40 +346,6 @@ async def get_all_mortgages(db: Session = Depends(get_db), token: str = Header(N
 
         raise HTTPException(status_code=401, detail="Token not provided")
 
-# @router.get("/mortgages/debtor/{debtor_id}")  # LOGS
-# def get_mortgages_by_debtor(debtor_id: str, db: Session = Depends(get_db)):
-#     debtor = db.query(UserInDB).filter(UserInDB.id_number == debtor_id).first()
-
-#     if debtor is None:
-#         # Log user not found
-#         log_entry = LogsInDb(
-#             action="User Alert",
-#             timestamp=local_timestamp_str,
-#             message=f"User not found with ID: {debtor_id}",
-#             user_id=debtor_id
-#         )
-#         db.add(log_entry)
-#         db.commit()
-#         return {"message": "No existe usuario con el ID en referencia"}
-
-#     # Log successful retrieval of mortgages
-#     log_entry = LogsInDb(
-#         action="User Accessed Mortgages Component",
-#         timestamp=local_timestamp_str,
-#         message=f"Mortgages retrieved for debtor with ID: {debtor_id}",
-#         user_id=debtor_id
-#     )
-#     db.add(log_entry)
-#     db.commit()
-
-#     mortgages = db.query(MortgageInDB).filter(MortgageInDB.debtor_id == debtor_id).all()
-    
-#     if not mortgages:
-#         return {"message": "No tienes hipotecas como deudor"}
-#     else:
-#         result = [mortgage.__dict__ for mortgage in mortgages]
-#         return result
-
 
 @router.get("/mortgage_detail/{debtor_id}")  # LOGS #TOKEN ADMIN ONLY
 def get_mortgage_details_by_debtor(debtor_id: str, db: Session = Depends(get_db), token: str = Header(None)):
@@ -436,7 +418,7 @@ def process_mortgages(property_id: int, db: Session = Depends(get_db), token: st
 
     if not loan_progress:
         raise HTTPException(status_code=404, detail="Loan progress for the selected property not found")
-
+ 
     # Query for debtor and lender information based on the found records
     debtor = db.query(UserInDB).filter(UserInDB.id_number == property.debtor_id).first()
     lender = db.query(UserInDB).filter(UserInDB.id_number == loan_progress.lender_id).first()
@@ -461,8 +443,8 @@ def process_mortgages(property_id: int, db: Session = Depends(get_db), token: st
 async def gestion_hipotecas(property_id: int, db: Session = Depends(get_db), token: str = Header(None)):
     decoded_token   = decode_jwt(token)
     role_from_token = decoded_token.get("role")
-    
-    if role_from_token != "admin" or " lawyer":
+        
+    if role_from_token not in ["admin", "lawyer"]:
         raise HTTPException(status_code=403, detail="Not authorized")
 
     mortgage = db.query(MortgageInDB).filter(MortgageInDB.id == property_id).first()
@@ -487,7 +469,7 @@ async def gestion_hipotecas(property_id: int, db: Session = Depends(get_db), tok
                 presigned_url = generate_presigned_url(file.file_location) if file.file_location else None
                 documents_dict[file.file_type]['uploaded'] = True if presigned_url else False
                 documents_dict[file.file_type]['path'] = presigned_url
-
+ 
         return {
             "matricula_id": property.matricula_id,
             "address": property.address,

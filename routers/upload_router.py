@@ -43,8 +43,8 @@ def save_file_to_db(db: Session, entity_type: str, entity_id: int, file_type: st
     db.refresh(new_file)
     return new_file
 
-@router.get("/list-uploads")
-async def list_uploads():
-    upload_folder = Path('./uploads')
-    file_urls = [f"/uploads/{file.name}" for file in upload_folder.iterdir() if file.is_file()]
-    return {"files": file_urls}
+# @router.get("/list-uploads")
+# async def list_uploads():
+#     upload_folder = Path('./uploads')
+#     file_urls = [f"/uploads/{file.name}" for file in upload_folder.iterdir() if file.is_file()]
+#     return {"files": file_urls}

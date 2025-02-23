@@ -51,15 +51,18 @@ def reg_to_dict(reg):
             "lender_id"         : reg.lender_id,
             "debtor_id"         : reg.debtor_id,
             "date"              : reg.date,
+            "paid"              : reg.paid,
             "concept"           : reg.concept,
             "amount"            : reg.amount,
             "penalty"           : reg.penalty,
+            "penalty_days"      : reg.penalty_days, 
             "min_payment"       : reg.min_payment,
             "limit_date"        : reg.limit_date,
             "to_main_balance"   : reg.to_main_balance,
             "comprobante"       : reg.comprobante,
             "payment_status"    : reg.payment_status,
             "comment"           : reg.comment,
+            "payment_type"      : reg.payment_type
         }
 translate_status = {
     "approved"  : "aprobado",
@@ -69,102 +72,122 @@ translate_status = {
 
 
 
-@router.post("/mortgage_payment/register/")  #LOGS
+@router.post("/mortgage_payment/register/")  # LOGS
 async def register_mortgage_payment(
-    payment_receipt: UploadFile = FastAPIFile(...),
-    reg_data: str = Form(...),
-    db: Session = Depends(get_db), 
-    token: str = Header(None)):
-
-    print("Received reg_data:", reg_data)  # Print reg_data as received
+    payment_receipt : UploadFile    = FastAPIFile(None),  # Archivo ahora es opcional
+    reg_data        : str           = Form(...),
+    db              : Session       = Depends(get_db), 
+    token           : str           = Header(None)
+):
+    # Convertir reg_data de JSON a diccionario
     reg_data_dict = json.loads(reg_data)
-    print("Parsed reg_data_dict:", reg_data_dict) 
-    
-    if not token:
-        # Log unauthorized access attempt
-        log_entry = LogsInDb(
-            action      = "User Alert",
-            timestamp   = local_timestamp_str,
-            message     = "Unauthorized access attempt to register mortgage payment (Token not provided)",
-            user_id     = None
-        )
-        db.add(log_entry)
-        db.commit()
-        raise HTTPException(status_code=401, detail="Token not provided")
 
     decoded_token = decode_jwt(token)
     user_id_from_token = decoded_token.get("id")
 
-    # Fetch mortgage details
+    # Buscar hipoteca en la base de datos
     mortgage_id = reg_data_dict['mortgage_id']
-    mortgage = db.query(MortgageInDB).filter(MortgageInDB.id == mortgage_id).first()
+    mortgage    = db.query(MortgageInDB).filter(MortgageInDB.id == mortgage_id).first()
     if not mortgage:
         raise HTTPException(status_code=404, detail="Mortgage not found")
 
-    upload_folder = './uploads'
-    os.makedirs(upload_folder, exist_ok=True)
-    
-    payment_receipt_filename = f"{mortgage.id}_receipt_{payment_receipt.filename}"
-    payment_receipt_location = f"{upload_folder}/{payment_receipt_filename}"
-    with open(payment_receipt_location, "wb") as buffer:
-        shutil.copyfileobj(payment_receipt.file, buffer)
-    
-    save_file_to_db(db, "mortgage_payment", mortgage.id, "payment_receipt", payment_receipt_location)
+    # Subir comprobante si se proporciona
+    payment_receipt_location = None
+    payment_type = "PSE"  # Por defecto, si no se proporciona archivo
+    if payment_receipt:
+        upload_folder = './uploads'
+        os.makedirs(upload_folder, exist_ok=True) 
+        payment_receipt_filename = f"{mortgage.id}_receipt_{payment_receipt.filename}"
+        payment_receipt_location = f"{upload_folder}/{payment_receipt_filename}"
+        with open(payment_receipt_location, "wb") as buffer:
+            shutil.copyfileobj(payment_receipt.file, buffer)
+        save_file_to_db(db, "mortgage_payment", mortgage.id, "payment_receipt", payment_receipt_location)
+        payment_type = "consignacion bancaria"
 
+    # Log del recibo de pago
     log_entry = LogsInDb(
-        action      = "Payment Receipt Uploaded",
-        timestamp   = datetime.now(),
-        message     = f"Payment receipt uploaded for mortgage ID: {mortgage.id}",
+        action      = "Payment Receipt Uploaded" if payment_receipt else "Payment Reported (PSE)",
+        timestamp   = local_timestamp_str,
+        message     = f"Payment {payment_type} reported for mortgage ID: {mortgage.id}",
         user_id     = user_id_from_token
     )
     db.add(log_entry)
     db.commit()
 
-    # Use the last system-generated register to get some default values
+    # Obtener el último registro generado automáticamente por el sistema
     last_system_register = (
-    db.query(RegsInDb)
-    .filter(RegsInDb.mortgage_id == reg_data_dict['mortgage_id'], RegsInDb.comment == "System")  # Use reg_data_dict
-    .order_by(RegsInDb.date.desc())
-    .first()
+        db.query(RegsInDb)
+        .filter(RegsInDb.mortgage_id == mortgage_id, RegsInDb.comment == "System")
+        .order_by(RegsInDb.date.desc())
+        .first()
     )
-  
-    # Set default values based on the last system-generated register
+
+    # Valores predeterminados
     debtor_id   = last_system_register.debtor_id if last_system_register else reg_data_dict['debtor_id']
     min_payment = last_system_register.min_payment if last_system_register else reg_data_dict['min_payment']
     limit_date  = last_system_register.limit_date if last_system_register else reg_data_dict['limit_date']
 
-    # Create a new mortgage payment register
+    # Calcular mora y determinar tipo de pago
+    # Asegúrate de que payment_date y limit_date sean de tipo datetime.date
+    payment_date = reg_data_dict['payment_date']
+    if isinstance(payment_date, str):  # Si es cadena, conviértelo a datetime.date
+        payment_date = datetime.strptime(payment_date, '%Y-%m-%d').date()
+
+    limit_date = limit_date  # Aquí limit_date ya debe ser de tipo datetime.date
+    if isinstance(limit_date, str):  # Si es cadena, conviértelo a datetime.date
+        limit_date = datetime.strptime(limit_date, '%Y-%m-%d').date()
+
+    # Calcular mora y determinar tipo de pago
+    mora_days = (payment_date - limit_date).days if payment_date > limit_date else 0
+    ext = "extemporaneo" if mora_days > 0 else "normal"
+
+    # Crear un nuevo registro de pago
     new_register = RegsInDb(
-        mortgage_id     = reg_data_dict['mortgage_id'],
+        mortgage_id     = mortgage_id,
         lender_id       = mortgage.lender_id,
         debtor_id       = debtor_id,
-        date            = reg_data_dict['payment_date'],  # Make sure the key matches what you send from the frontend
-        concept         = "Pago reportado por usuario",
-        amount          = reg_data_dict['paid'],  # Make sure the key matches what you send from the frontend
+        date            = payment_date,
+        paid            = reg_data_dict['paid'],
+        concept         = f"Pago {ext} reportado por usuario",
+        amount          = 0,
         penalty         = 0,
+        penalty_days    = mora_days,
         min_payment     = min_payment,
         limit_date      = limit_date,
         to_main_balance = 0,
-        comprobante     = payment_receipt_location,  # Already correctly set above
+        comprobante     = payment_receipt_location,
         payment_status  = "pending",
-        comment         = "debtor"
+        comment         = f"Pagado con {mora_days} días en mora" if mora_days > 0 else "Pago en fecha",
+        payment_type    = payment_type
     )
 
-    # Log successful mortgage payment registration
+    # Registrar la acción en logs
     log_entry = LogsInDb(
-    action      = "Mortgage Payment Registered",
-    timestamp   = datetime.now(),
-    message     = f"Mortgage payment registered for mortgage ID: {reg_data_dict['mortgage_id']}",  # Corrected access
-    user_id     = user_id_from_token
+        action      = "Mortgage Payment Registered",
+        timestamp   = local_timestamp_str,
+        message     = f"Mortgage payment registered for mortgage ID: {mortgage_id}",
+        user_id     = user_id_from_token
     )
     db.add(log_entry)
     db.commit()
 
-    # Commit the changes to the database
+    # Guardar el nuevo registro
     db.add(new_register)
     db.commit()
 
-    return {"message": "Pago reportado con exito"}
+    # Mensaje final para el usuario
+    if mora_days > 0:
+        message = (
+            f"Su pago ha sido reportado como extemporáneo con {mora_days} días en mora. "
+            f"Por ser un reporte manual ({payment_type}), será revisado y formalizado en los próximos días."
+        )
+    else:
+        message = (
+            f"Tu pago ha sido reportado. "
+            f"Por ser un reporte manual ({payment_type}), será revisado y formalizado en los próximos días."
+        )
+
+    return {"message": message}
 
 
 
@@ -173,10 +196,10 @@ def pending_regs(status: str, db: Session = Depends(get_db), token: str = Header
     if not token:
         # Log unauthorized access attempt
         log_entry = LogsInDb(
-            action="User Alert",
-            timestamp=local_timestamp_str,
-            message=f"Unauthorized access attempt to get pending registers (Token not provided)",
-            user_id=None
+            action      = "User Alert",
+            timestamp   = local_timestamp_str,
+            message     = f"Unauthorized access attempt to get pending registers (Token not provided)",
+            user_id     = None
         )
         db.add(log_entry)
         db.commit()
@@ -191,10 +214,10 @@ def pending_regs(status: str, db: Session = Depends(get_db), token: str = Header
     if role_from_token != "admin":
         # Log unauthorized access attempt
         log_entry = LogsInDb(
-            action="User Alert",
-            timestamp=local_timestamp_str,
-            message=f"Unauthorized access attempt to get pending registers (Admin permission required)",
-            user_id=decoded_token.get("id")
+            action      = "User Alert",
+            timestamp   = local_timestamp_str,
+            message     = f"Unauthorized access attempt to get pending registers (Admin permission required)",
+            user_id     = decoded_token.get("id")
         )
         db.add(log_entry)
         db.commit()
@@ -211,15 +234,18 @@ def pending_regs(status: str, db: Session = Depends(get_db), token: str = Header
         "lender_id"         : reg.lender_id,
         "debtor_id"         : reg.debtor_id,
         "date"              : reg.date,
+        "paid"              : reg.paid,
         "concept"           : reg.concept,
         "amount"            : reg.amount,
         "penalty"           : reg.penalty,
+        "penalty_days"      : reg.penalty_days,
         "min_payment"       : reg.min_payment,
         "limit_date"        : reg.limit_date,
         "to_main_balance"   : reg.to_main_balance,
         "comprobante"       : reg.comprobante,
         "payment_status"    : reg.payment_status,
         "comment"           : reg.comment,
+        "payment_type"      : reg.payment_type
             } for reg in regs]
 
 
@@ -259,39 +285,55 @@ async def get_regs(debtor_id: str, db: Session = Depends(get_db), token: str = H
         db.commit()
         raise HTTPException(status_code=403, detail="No tienes permiso para ver estos registros")
 
-    all_regs    = db.query(RegsInDb).filter(RegsInDb.debtor_id == debtor_id).order_by(RegsInDb.date).all()
+    debtor_id = debtor_id.strip()
+   
     user        = db.query(UserInDB).filter(UserInDB.id_number == debtor_id).first()
+    all_regs    = db.query(RegsInDb).filter(RegsInDb.debtor_id == debtor_id).order_by(RegsInDb.date).all()
+    
     if not user:
         return {"message": "Usuario no existe en la base de datos, revisa los valores ingresados"}
     regs = []
-
+    mortgages = db.query(MortgageInDB).filter(MortgageInDB.debtor_id == debtor_id).all()
+    
+    mort = []
+    for mor in mortgages:
+        if mor.debtor_id == debtor_id:
+            mort.append(mor)
+ 
     for record in all_regs:
         regs.append({ 
             "payment_date"      : record.date,
+            "paid"              : record.paid,
             "concept"           : record.concept,
             "amount"            : record.amount,
             "penalty"           : record.penalty,
+            "penalty_days"      : record.penalty_days,
             "min_payment"       : record.min_payment,
             "limit_date"        : record.limit_date,
             "to_main_balance"   : record.to_main_balance,
+            "comprobante"       : record.comprobante,
             "status"            : record.payment_status,  
+            "payment_type"      : record.payment_type,
+            "comments"          : record.comment,
             "id"                : record.id
         })
 
     if not regs:
-        if user and not all_regs:
-            return {"message": "El usuario aun no registra movimientos"}
-        else:
-            return {"message": f"No hay registros para el deudor con ID {debtor_id}"}
+        regs = [{"message": "El usuario aún no registra movimientos"}]
 
-    return {"regs": regs}
+    if not mort:
+        mort = [{"message": f"No hay hipotecas para el deudor con ID {debtor_id}"}]
 
+    return {
+        "regs": regs,
+        "mort": mort
+    }
 
 
 @router.post("/closing_date/")
-async def generate_system_payment(reg_data: SystemReg, db: Session = Depends(get_db), token: str = Header(None)):
-
-    decoded_token = None  # Initialize decoded_token outside the if block
+async def generate_system_payment(
+    reg_data: SystemReg, db: Session = Depends(get_db), token: str = Header(None)
+):
 
     if not token:
         raise HTTPException(status_code=401, detail="Token not provided")
@@ -300,27 +342,15 @@ async def generate_system_payment(reg_data: SystemReg, db: Session = Depends(get
     role_from_token = decoded_token.get("role")
     user_id_from_token = decoded_token.get("id")
 
+    # Verificar permisos de administrador
     if role_from_token != "admin":
-        raise HTTPException(status_code=403, detail="No tienes permiso para generar pagos automáticos")
+        raise HTTPException(
+            status_code=403, detail="No tienes permiso para generar pagos automáticos"
+        )
 
     debtor_id = reg_data.debtor_id
 
-    # Check if the router was already used this month or if there is a missing month
-    last_system_register = (
-        db.query(RegsInDb)
-        .filter(RegsInDb.debtor_id == debtor_id, RegsInDb.comment == "System")
-        .order_by(RegsInDb.date.desc())
-        .first()
-    )
-
-    if last_system_register:
-        last_month = reg_data.date.month - 1 if reg_data.date.month > 1 else 12
-
-        if last_system_register.date.month == reg_data.date.month:
-            raise HTTPException(status_code=400, detail="El proceso ya se ejecutó para este mes")
-        elif last_system_register.date.month != last_month:
-            raise HTTPException(status_code=400, detail="Mes faltante en registros")
-
+    # Obtener el último registro del deudor
     last_register = (
         db.query(RegsInDb)
         .filter(RegsInDb.debtor_id == debtor_id)
@@ -331,19 +361,31 @@ async def generate_system_payment(reg_data: SystemReg, db: Session = Depends(get
     if not last_register:
         raise HTTPException(status_code=404, detail="No se encontraron registros para el deudor")
 
-    # Check if the last register has pending payment status
+    # Validar que el último registro esté aprobado
     if last_register.payment_status.lower() != "approved":
         raise HTTPException(
-            status_code=400, detail="El último registro no tiene un pago aprobado. Verifique antes de proceder."
+            status_code=400,
+            detail="El último registro no tiene un estado aprobado. No se puede generar el cobro.",
         )
 
     mortgage = db.query(MortgageInDB).filter(MortgageInDB.id == last_register.mortgage_id).first()
 
-    # Check if the last register is system-generated and has no amount reported
-    if last_register.comment.lower() == "system" and last_register.amount == 0:
-        # Check if there is a penalty rate set for the closing month
+    if not mortgage:
+        raise HTTPException(status_code=404, detail="No se encontró la hipoteca asociada al último registro")
+
+    # Determinar si hay días en mora en el último registro y calcular penalidades adicionales
+    penalty_amount = 0
+    penalty_days = last_register.penalty_days  # Días en mora reportados
+    penalty_description = ""
+
+    if penalty_days > 0:
         penalty_rate = (
-            db.query(PenaltyInDB).filter(PenaltyInDB.start_date <= reg_data.date, PenaltyInDB.end_date >= reg_data.date).first()
+            db.query(PenaltyInDB)
+            .filter(
+                PenaltyInDB.start_date <= reg_data.date.replace(day=1),
+                PenaltyInDB.end_date >= reg_data.date.replace(day=31)
+            )
+            .first()
         )
 
         if not penalty_rate:
@@ -353,95 +395,37 @@ async def generate_system_payment(reg_data: SystemReg, db: Session = Depends(get
                        "Asegúrese de configurar la tasa de interés de mora antes de continuar."
             )
 
-        penalty_amount = (mortgage.current_balance * penalty_rate.penalty_rate) / 100
-        penalty_description = f"Intereses de mora generados ({penalty_rate.penalty_rate}%) "
-        mortgage.mortgage_status = "debt_pending"
+        # Calcular penalidad adicional por días en mora
+        penalty_amount = ((last_register.min_payment * penalty_rate.penalty_rate / 100) / 30) * penalty_days
+        penalty_description = f"Intereses de mora generados ({penalty_rate.penalty_rate}%) por {penalty_days} días"
 
-    else:
-        # Check if the last register was a payment reported by the user
-        if last_register.concept.lower() == "pago reportado por usuario":
-            # Calculate if the payment was on time
-            if last_register.amount >= last_register.min_payment:
-                # The payment was on time, no penalty needed
-                penalty_amount = 0
-                penalty_description = ""
-            else:
-                # Check if there is a penalty rate set for the closing month
-                penalty_rate = (
-                    db.query(PenaltyInDB)
-                    .filter(
-                        PenaltyInDB.start_date <= reg_data.date.replace(day=1),
-                        PenaltyInDB.end_date >= reg_data.date.replace(day=31)
-                    )
-                    .first()
-                )
-
-                if not penalty_rate:
-                    raise HTTPException(
-                        status_code=400,
-                        detail="No hay un interés de mora fijado para el mes actual. "
-                               "Asegúrese de configurar la tasa de interés de mora antes de continuar."
-                    )
-
-                penalty_days = (last_register.date - last_register.limit_date).days
-                penalty_amount = ((last_register.min_payment * penalty_rate.penalty_rate / 100) / 30) * penalty_days
-                penalty_description = f"Intereses de mora generados ({penalty_rate.penalty_rate}%) por {penalty_days} días"
-        else:
-            # Check if there is a penalty rate set for the closing month
-            penalty_rate = (
-                db.query(PenaltyInDB)
-                .filter(
-                    PenaltyInDB.start_date <= reg_data.date.replace(day=1),
-                    PenaltyInDB.end_date >= reg_data.date.replace(day=30)
-                )
-                .first()
-            )
-
-            if not penalty_rate:
-                raise HTTPException(
-                    status_code=400,
-                    detail="No hay un interés de mora fijado para el mes actual. "
-                           "Asegúrese de configurar la tasa de interés de mora antes de continuar."
-                )
-
-            penalty_days = (last_register.date - last_register.limit_date).days
-            penalty_amount = ((last_register.min_payment * penalty_rate.penalty_rate / 100) / 30) * penalty_days
-            penalty_description = f"Intereses de mora generados ({penalty_rate.penalty_rate}%) por {penalty_days} días"
-
-    # Calculate current month min_payment
-    if not mortgage:
-        raise HTTPException(status_code=404, detail="No se encontró la hipoteca asociada al último registro")
-
+    # Calcular el nuevo pago mínimo
     min_payment = (mortgage.current_balance * mortgage.interest_rate / 100) + penalty_amount
 
-    # Check if there is any amount reported by the user
-    if last_register.amount > 0:
-        # Check if there is any remaining after discounts
-        remaining = last_register.amount - min_payment - penalty_amount
-        if remaining > 0:
-            # If the remaining is more than 5% of the mortgage current_balance, update the mortgage
-            if remaining > (0.05 * mortgage.current_balance):
-                mortgage.current_balance -= remaining
-                last_register.to_main_balance = remaining
-            else:
-                # Update the min_payment for the next month
-                min_payment += remaining
+    # Validar si el último pago cubrió el pago mínimo y ajustar remanente
+    remaining_payment = last_register.paid - last_register.min_payment if last_register.paid else -last_register.min_payment
 
-    # Commit the changes to the mortgage before calculating the next min_payment
+    if remaining_payment > 0:
+        if remaining_payment > (0.05 * mortgage.current_balance):  # Si el remanente es significativo
+            mortgage.current_balance -= remaining_payment
+            last_register.to_main_balance = remaining_payment
+        else:
+            min_payment -= remaining_payment
+
+    # Confirmar los cambios antes de generar el nuevo registro
     db.commit()
 
-    # Calculate current month min_payment after updating the mortgage.current_balance
-    min_payment = (mortgage.current_balance * mortgage.interest_rate / 100) + penalty_amount
-
-    # Create a new system payment register
+    # Generar el nuevo registro del sistema
     new_register = RegsInDb(
         mortgage_id=last_register.mortgage_id,
         lender_id=last_register.lender_id,
         debtor_id=debtor_id,
         date=reg_data.date,
-        concept=f"Cobro generado por sistema ({penalty_description})",
-        amount=0,
+        concept=f"Cobro generado por sistema ({penalty_description})" if penalty_amount > 0 else "Cobro generado por sistema",
+        paid=0,  # No hay pagos en este registro
+        amount=0,  # No hay cargos adicionales
         penalty=penalty_amount,
+        penalty_days=penalty_days,
         min_payment=min_payment,
         limit_date=reg_data.date.replace(day=5) + relativedelta(months=1),
         to_main_balance=0,
@@ -449,10 +433,10 @@ async def generate_system_payment(reg_data: SystemReg, db: Session = Depends(get
         comment="System",
     )
 
-    # Update mortgage last_update date
+    # Actualizar la fecha de última actualización de la hipoteca
     mortgage.last_update = reg_data.date
 
-    # Log successful system payment generation
+    # Registrar el evento en los logs
     log_entry = LogsInDb(
         action="System Payment Generated",
         timestamp=local_timestamp_str,
@@ -461,14 +445,11 @@ async def generate_system_payment(reg_data: SystemReg, db: Session = Depends(get
     )
     db.add(log_entry)
 
-    # Commit the changes to the database
+    # Guardar el nuevo registro y confirmar los cambios
     db.add(new_register)
     db.commit()
 
     return {"message": "Cobro generado por sistema exitosamente"}
-
-
-
 
 
 
@@ -519,29 +500,16 @@ def get_reg(reg_id: int, db: Session = Depends(get_db), token: str = Header(None
 @router.put("/update_reg/")
 def update_register_status(reg_update: RegsUpDate, db: Session = Depends(get_db), token: str = Header(None)):
 
-    if not token:
-        # Log unauthorized access attempt
-        log_entry = LogsInDb(
-            action="User Alert",
-            timestamp=local_timestamp_str,
-            message=f"Unauthorized access attempt to update register (Token not provided)",
-            user_id=None
-        )
-        db.add(log_entry)
-        db.commit()
-        raise HTTPException(status_code=401, detail="Token not provided")
-
     decoded_token = decode_jwt(token)
     role_from_token = decoded_token.get("role")
 
     # Admin permission check
     if role_from_token != "admin":
-        # Log unauthorized access attempt
         log_entry = LogsInDb(
             action="User Alert",
             timestamp=local_timestamp_str,
             message=f"Unauthorized access attempt to update register (Admin permission required)",
-            user_id=decoded_token.get("id")
+            user_id=decoded_token.get("id"),
         )
         db.add(log_entry)
         db.commit()
@@ -553,33 +521,143 @@ def update_register_status(reg_update: RegsUpDate, db: Session = Depends(get_db)
     if not reg:
         raise HTTPException(status_code=404, detail="Registro no encontrado")
 
-    # Update payment_status to new_status
+    # Update payment_status and add comments based on the new status
     reg.payment_status = reg_update.new_status
 
-    # If the new status is "approved", update MortgageInDB.last_update
     if reg_update.new_status.lower() == "approved":
+        reg.comment = "Pago confirmado"
+        # Update MortgageInDB.last_update to the payment date if it hasn't been set
         mortgage = db.query(MortgageInDB).filter(MortgageInDB.id == reg.mortgage_id).first()
-        if mortgage:
+        if mortgage and not mortgage.last_update:
             mortgage.last_update = reg.date
+
+    elif reg_update.new_status.lower() == "rejected":
+        reg.comment = "Pago rechazado por sistema"
 
     # Log the update operation
     log_entry = LogsInDb(
         action="Register Status Updated",
         timestamp=local_timestamp_str,
         message=f"Registro {reg_update.reg_id} actualizado a estado: {reg_update.new_status}",
-        user_id=decoded_token.get("id")
+        user_id=decoded_token.get("id"),
     )
     db.add(log_entry)
     db.commit()
 
     return {"message": f"Registro {reg_update.reg_id} actualizado exitosamente"}
 
+
     
-@router.delete("/registers/delete/{register_id}")
-def delete_register(register_id: int, db: Session = Depends(get_db)):
-    existing_register = db.query(RegsInDb).filter(RegsInDb.id == register_id).first()
-    if not existing_register:
-        raise HTTPException(status_code=404, detail="Register not found")
-    db.delete(existing_register)
+@router.delete("/delete_reg/{reg_id}")
+def delete_register(reg_id: int, db: Session = Depends(get_db), token: str = Header(None)):
+    decoded_token = decode_jwt(token)
+    role_from_token = decoded_token.get("role")
+
+    # Verificar permisos
+    if role_from_token != "admin":
+        raise HTTPException(status_code=403, detail="Admin permission required")
+
+    reg = db.query(RegsInDb).filter(RegsInDb.id == reg_id).first()
+    if not reg:
+        raise HTTPException(status_code=404, detail="Registro no encontrado")
+
+    db.delete(reg)
     db.commit()
-    return {"message": "Register deleted successfully"}
+    return {"message": f"Registro {reg_id} eliminado exitosamente"}
+
+@router.get("/debtor_names/")   #WARNING NO TOKEN!!
+def get_names(db: Session = Depends(get_db)):
+    users = db.query(UserInDB).filter(UserInDB.role == 'debtor').all()
+    names = []
+    for user in users:
+        names.append({
+            "id"        : user.id_number,
+            "nombre"    : user.username,
+        })
+    return {'debts': names}
+
+
+@router.get("/last_reg/{debtor_id}")
+def get_last_reg(debtor_id: str, db: Session = Depends(get_db), token: str = Header(None)):
+    if not token:
+        raise HTTPException(status_code=401, detail="Token not provided")
+
+    decoded_token = decode_jwt(token)
+    role_from_token = decoded_token.get("role")
+
+    if role_from_token != "admin":
+        raise HTTPException(status_code=403, detail="Admin permission required")
+
+    reg = (
+        db.query(RegsInDb)
+        .filter(RegsInDb.debtor_id == debtor_id)
+        .order_by(RegsInDb.date.desc())
+        .first()
+    )
+
+    if not reg:
+        return {"message": f"No se encontraron registros para el deudor con ID {debtor_id}"}
+
+
+    return reg_to_dict(reg)
+
+@router.post("/payment_register/")
+async def register_mortgage_payment_simple(
+    reg_data        : str           = Form(...),
+    db              : Session       = Depends(get_db),
+    token           : str           = Header(None)
+):
+    # Decodificar y validar el token
+    if not token:
+        raise HTTPException(status_code=401, detail="Token not provided")
+
+    # Convertir reg_data de JSON a diccionario
+    reg_data_dict = json.loads(reg_data)
+
+    # Buscar hipoteca
+    mortgage_id = reg_data_dict.get('mortgage_id')
+    mortgage = db.query(MortgageInDB).filter(MortgageInDB.id == mortgage_id).first()
+    if not mortgage:
+        raise HTTPException(status_code=404, detail="Mortgage not found")
+
+
+    # Calcular mora y tipo de pago
+    payment_date = datetime.strptime(reg_data_dict['payment_date'], '%Y-%m-%d').date()
+    print(payment_date)
+    limit_date = datetime.strptime(reg_data_dict['limit_date'], '%Y-%m-%d').date()
+    print(limit_date)
+    mora_days = max((payment_date - limit_date).days, 0)
+    print(mora_days)
+    ext = "extemporaneo" if mora_days > 0 else "normal"
+    print(ext)
+
+    mortgage.last_update = reg_data_dict['payment_date']
+    
+    # Crear registro
+    new_register = RegsInDb(
+        mortgage_id     = mortgage_id,
+        lender_id       = mortgage.lender_id,
+        debtor_id       = reg_data_dict['debtor_id'],
+        date            = reg_data_dict['payment_date'],
+        paid            = reg_data_dict['paid'],
+        concept         = reg_data_dict['concept'],
+        amount          = reg_data_dict['amount'],
+        penalty         = reg_data_dict['penalty'],
+        penalty_days    = reg_data_dict ['penalty_days'],
+        min_payment     = reg_data_dict['min_payment'],
+        limit_date      = limit_date,
+        to_main_balance = reg_data_dict['to_main_balance'],
+        comprobante     = "No aplica",
+        payment_status  = "approved",
+        comment         = reg_data_dict ['comment'],
+        payment_type    = reg_data_dict ['payment_type'],
+    )
+    db.add(new_register)
+    db.commit()
+    
+    # Mensaje de respuesta
+    message = (
+        f"Pago reportado como {'extemporáneo' if mora_days > 0 else 'normal'}. "
+        f"Será revisado y formalizado en los próximos días. Tipo de pago: {new_register.payment_type}."
+    )
+    return {"message": message, "registro_id": new_register.id}
