@@ -11,7 +11,7 @@ import smtplib
 from smtplib import SMTP
 from dotenv import load_dotenv 
 from email.mime.text import MIMEText
-from email.mime.multipart import MIMEMultipart
+from email.mime.multipart import MIMEMultipart 
 import boto3
 from botocore.config import Config
 import json 
@@ -19,6 +19,8 @@ import os
 import random
 import string
 import secrets 
+from sendgrid import SendGridAPIClient
+from sendgrid.helpers.mail import Mail
 
 pwd_context = CryptContext(schemes=["bcrypt"], deprecated="auto")
 
@@ -884,7 +886,6 @@ async def check_mail(email: str, db: Session = Depends(get_db)):
     user = db.query(UserInDB).filter(UserInDB.email == email).first()
     
     if not user:
-        
         log_entry = LogsInDb(
             action      = "ALERTA! Recuperacion de contraseña correo inexistente",
             timestamp   = local_timestamp_str,
@@ -892,61 +893,59 @@ async def check_mail(email: str, db: Session = Depends(get_db)):
             user_id     = None
         )
         db.add(log_entry)
-        db.commit()
-        
+        db.commit()        
         raise HTTPException(status_code=404, detail="No se encontró un usuario con este correo electrónico.")
 
     if user:
         oob_code = secrets.token_urlsafe(64)
-        # Email setup
-        sender_email    = "no-reply@mail.app.actyvalores.com" 
-        receiver_email  = email
-        subject         = "Recuperacion de contraseña"
-        body            = "Hola, si has solicitado recuperar tu contraseña de la APP Actyvalores, por favor has click en el link para asignar una nueva contraseña:"
-        body_html = f"""\
+        # Configuración del correo
+        sender_email   = "comercial@actyvalores.com" 
+        receiver_email = email
+        subject        = "Recuperacion de contraseña"
+        body_html      = f"""\
         <html>
-        <head>
+          <head>
             <style>
-                body {{ font-family: Arial, sans-serif; margin: 0; padding: 20px; color: #333; }}
-                .content {{ background-color: #f4f4f4; padding: 20px; border-radius: 10px; }}
-                .footer {{ padding-top: 20px; font-size: 12px; color: #666; }}
-                a {{ color: #0073AA; text-decoration: none; }}
-                a:hover {{ text-decoration: underline; }}
+              body {{ font-family: Arial, sans-serif; margin: 0; padding: 20px; color: #333; }}
+              .content {{ background-color: #f4f4f4; padding: 20px; border-radius: 10px; }}
+              .footer {{ padding-top: 20px; font-size: 12px; color: #666; }}
+              a {{ color: #0073AA; text-decoration: none; }}
+              a:hover {{ text-decoration: underline; }}
             </style>
-        </head>
-        <body>
+          </head>
+          <body>
             <div class="content">
-                <h1>Recuperación de Contraseña</h1>
-                <p>Hola,</p>
-                <p>Si has solicitado recuperar tu contraseña de la APP Actyvalores, por favor haz click en el siguiente botón para asignar una nueva contraseña:</p>
-                <p style="text-align: center;">
-                    <a href='https://app.actyvalores.com/auth/action/{email}?mode=resetPassword&oobCode={oob_code}&apiKey=AIzaSyAo1OXXBKkJ0T_HHMiW2Df-KumPJrQU94I&lang=es-419' style='padding: 10px 20px; background-color: #0A8CBF; color: white; border-radius: 5px; text-align: center; display: inline-block;'>Restablecer Contraseña</a>
-                </p>
+              <h1>Recuperación de Contraseña</h1>
+              <p>Hola,</p>
+              <p>Si has solicitado recuperar tu contraseña de la APP Actyvalores, por favor haz click en el siguiente botón para asignar una nueva contraseña:</p>
+              <p style="text-align: center;">
+                <a href='https://app.actyvalores.com/auth/action/{email}?mode=resetPassword&oobCode={oob_code}&apiKey=AIzaSyAo1OXXBKkJ0T_HHMiW2Df-KumPJrQU94I&lang=es-419' style='padding: 10px 20px; background-color: #0A8CBF; color: white; border-radius: 5px; text-align: center; display: inline-block;'>Restablecer Contraseña</a>
+              </p>
             </div>
             <div class="footer">
-                <p>Si no has solicitado este cambio, por favor ignora este mensaje.</p>
-                <p>Saludos,<br>Equipo de Desarrollo</p>
-                <p><a href="https://app.actyvalores.com">actyvalores.com</a></p>
+              <p>Si no has solicitado este cambio, por favor ignora este mensaje.</p>
+              <p>Saludos,<br>Equipo de Desarrollo</p>
+              <p><a href="https://app.actyvalores.com">actyvalores.com</a></p>
             </div>
-        </body>
+          </body>
         </html>
         """
 
-        # with smtplib.SMTP(smtp_host, 587) as server:
-        #     server.starttls()
-        #     server.login(smtp_user, smtp_password) 
-        #     msg = MIMEMultipart('alternative')
-        #     msg['Subject'] = subject
-        #     msg['From'] = sender_email
-        #     msg['To'] = receiver_email
-        #     part1 = MIMEText(body, 'plain')
-        #     part2 = MIMEText(body_html, 'html')
-        #     msg.attach(part1)
-        #     msg.attach(part2)
-        #     server.sendmail(sender_email, receiver_email, msg.as_string())
+        # Envío de correo vía SendGrid
+        sendgrid_api_key = os.getenv("SENDGRID_API_KEY")
+        message = Mail(
+            from_email      = sender_email,
+            to_emails       = receiver_email,
+            subject         = subject,
+            html_content    = body_html
+        )
+        try:
+            sg = SendGridAPIClient(sendgrid_api_key)
+            response = sg.send(message)
+        except Exception as e:
+            raise HTTPException(status_code=500, detail=f"Error enviando el correo: {e}")
 
-        # return {"exists": True, "message": "A recovery email has been sent if the address is registered with us."}
-    
+        return {"exists": True, "message": "Se ha enviado un correo de recuperación si el email está registrado."}    
     
 @router.put("/update_password/{email}")
 async def update_password(email: str, password_change: PasswordChange, db: Session = Depends(get_db)):

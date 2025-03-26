@@ -1,1 +1,4 @@
 .env
+
+# conector
+db_connection.py
