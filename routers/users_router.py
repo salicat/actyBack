@@ -18,7 +18,8 @@ import json
 import os
 import random
 import string
-import secrets 
+import secrets
+import re 
 from sendgrid import SendGridAPIClient
 from sendgrid.helpers.mail import Mail
 
@@ -395,9 +396,9 @@ async def create_affiliate_user(
     db.commit()
     
     
-    return {"message": f"Has creado el usuario '{user_in.username}'"
-            
-            }
+    return {
+        "message": f"Has creado el usuario '{user_in.username}'"
+        }
     
 
 
@@ -945,7 +946,66 @@ async def check_mail(email: str, db: Session = Depends(get_db)):
         except Exception as e:
             raise HTTPException(status_code=500, detail=f"Error enviando el correo: {e}")
 
-        return {"exists": True, "message": "Se ha enviado un correo de recuperación si el email está registrado."}    
+        return {"exists": True, "message": "Se ha enviado un correo de recuperación si el email está registrado."}  
+    
+
+def is_valid_email(email: str) -> bool:
+    email_regex = r'^[a-zA-Z0-9_.+-]+@[a-zA-Z0-9-]+\.[a-zA-Z0-9-.]+$'
+    return re.match(email_regex, email) is not None
+
+@router.post("/testUser_request/{email}")
+async def test_user_request(email: str, db: Session = Depends(get_db)):
+    # Validar formato del correo
+    if not is_valid_email(email):
+        raise HTTPException(status_code=400, detail="Formato de correo inválido.")
+    
+    # Verificar si el correo ya ha solicitado un usuario de prueba
+    existing_request = db.query(LogsInDb).filter(LogsInDb.message == email).first()
+    if existing_request:
+        raise HTTPException(status_code=400, detail="Este correo ya ha solicitado un usuario de prueba. Solo se permite una solicitud.")
+    
+    # Generar username a partir de la inicial del email
+    username = email.split("@")[0]  # Solo la primera letra antes del @
+
+    print(username)
+
+    # Generar contraseña temporal
+    temp_password = create_temp_password(username)
+    hashed =pwd_context.hash(temp_password)
+
+    # Crear usuario de prueba
+    tester_user = UserInDB(
+        role="tester",
+        username        = username,
+        email           = email,
+        hashed_password = hashed,
+        phone           = None,
+        legal_address   = "",
+        user_city       = "",
+        user_department = "",
+        id_number       = None,
+        user_status     = "test_user"  
+    )
+
+    db.add(tester_user)
+    db.commit()
+    db.refresh(tester_user)
+
+    # Guardar la solicitud en Logs
+    log_entry = LogsInDb(
+        action      = "Solicitud de usuario de pruebas",
+        timestamp   = local_timestamp_str,
+        message     = email,
+        user_id     = None
+    )
+    db.add(log_entry)
+    db.commit()
+
+    return {
+            "username": tester_user.username,
+            "password": temp_password
+    }
+     
     
 @router.put("/update_password/{email}")
 async def update_password(email: str, password_change: PasswordChange, db: Session = Depends(get_db)):
