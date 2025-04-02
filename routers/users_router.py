@@ -32,7 +32,7 @@ local_timestamp_str     = local_now.strftime('%Y-%m-%d %H:%M:%S.%f')
 
 SECRET_KEY                  = "8/8"
 ALGORITHM                   = "HS256"
-ACCESS_TOKEN_EXPIRE_MINUTES = 30
+ACCESS_TOKEN_EXPIRE_MINUTES = 15
 
 load_dotenv()
 
@@ -246,7 +246,7 @@ def create_access_token(username: str, role: str, user_id:str, user_pk:int, user
         expire = datetime.now() + expires_delta 
     else:
         expire = datetime.now() + timedelta(minutes=15)
-    to_encode.update({"exp": expire.timestamp()})
+    to_encode.update({"exp": int(expire.timestamp())})
     encoded_jwt = jwt.encode(to_encode, SECRET_KEY, algorithm=ALGORITHM)
     return encoded_jwt
 
@@ -401,39 +401,48 @@ async def create_affiliate_user(
         }
     
 
-
 @router.post("/user/auth/")  #LOGS
 async def auth_user(user_au: UserAuth, db: Session = Depends(get_db)):
     input_email = user_au.email.lower()
     user_in_db = db.query(UserInDB).filter(func.lower(UserInDB.email) == input_email).first()
     if not user_in_db:
         raise HTTPException(status_code=404, detail="El usuario no existe")
-        
+    
+    # Verificar la contraseña del usuario según lo almacenado en la DB
     if not pwd_context.verify(user_au.password, user_in_db.hashed_password):
         raise HTTPException(status_code=403, detail="Error de autenticacion")
-
+    
+    # Guardar el log utilizando los datos del UserAuth (quien está probando la aplicación)
     log_entry = LogsInDb(
-        action          = "User Logged",
-        timestamp       = local_timestamp_str,
-        message         = f"User with username '{user_in_db.username}' has entered the app",
-        user_id         = user_in_db.id_number
+        action        = "User Logged",
+        timestamp     = local_timestamp_str,
+        message       = f"User with email '{input_email}' has entered the app",
+        user_id       = user_in_db.id_number
     )
     db.add(log_entry)
     db.commit()
-
+    
+    # Si el usuario es de pruebas, se reemplaza la información para acceder a la aplicación
+    # usando las credenciales fijas del perfil de pruebas (usuario periquito)
+    if user_in_db.role == "tester":
+        test_user = db.query(UserInDB).filter(UserInDB.email == "periquito@gmail.com").first()
+        if not test_user:
+            raise HTTPException(status_code=500, detail="Perfil de prueba no encontrado")
+        user_in_db = test_user  # Se utiliza la información del usuario de pruebas para generar el token
+    
     access_token_expires = timedelta(minutes=ACCESS_TOKEN_EXPIRE_MINUTES)
     access_token = create_access_token(
-        username        = user_in_db.username,
-        role            = user_in_db.role,
-        user_id         = user_in_db.id_number,
-        user_pk         = user_in_db.id,
-        user_st         = user_in_db.user_status,
-        expires_delta   = access_token_expires
+        username      = user_in_db.username,
+        role          = user_in_db.role,
+        user_id       = user_in_db.id_number,
+        user_pk       = user_in_db.id,
+        user_st       = user_in_db.user_status,
+        expires_delta = access_token_expires
     )
     response = {
         "Autenticado": True,
         "access_token": access_token,
-        "user_status" : user_in_db.user_status  #line added to stablish global variable
+        "user_status" : user_in_db.user_status
     }
     return response
 
@@ -578,7 +587,6 @@ async def get_user_info(user_info_ask: UserInfoAsk, db: Session = Depends(get_db
             "phone": user.phone
         }
 
-    
 
 @router.get("/admin_panel/users/")  # Logs for Admin and Agent, token required
 async def get_all_users(
@@ -679,6 +687,7 @@ async def get_all_users(
     else:
         raise HTTPException(status_code=403, detail="No tienes permiso de ver esta información")
 
+
 @router.get("/admin_summary")
 def admin_summary(db: Session = Depends(get_db), token: str = Header(None)):
 
@@ -775,7 +784,6 @@ def admin_summary(db: Session = Depends(get_db), token: str = Header(None)):
     return summary
 
 
-
 @router.get("/all_registers")
 def get_all_registers(db: Session = Depends(get_db), token: str = Header(None)):
     
@@ -802,7 +810,7 @@ async def update_user_info(
     cedula_back         : UploadFile = FastAPIFile(None),
     bank_certification  : UploadFile = FastAPIFile(None), 
     profile_picture     : UploadFile = FastAPIFile(None),
-    professional_card   : UploadFile = FastAPIFile(None),  # Nuevo campo para abogados
+    professional_card   : UploadFile = FastAPIFile(None), 
     user_data           : str = Form(...),
     db                  : Session = Depends(get_db),
     token               : str = Header(None)
@@ -960,9 +968,9 @@ async def test_user_request(email: str, db: Session = Depends(get_db)):
         raise HTTPException(status_code=400, detail="Formato de correo inválido.")
     
     # Verificar si el correo ya ha solicitado un usuario de prueba
-    existing_request = db.query(LogsInDb).filter(LogsInDb.message == email).first()
+    existing_request = db.query(UserInDB).filter(UserInDB.email == email).first()
     if existing_request:
-        raise HTTPException(status_code=400, detail="Este correo ya ha solicitado un usuario de prueba. Solo se permite una solicitud.")
+        raise HTTPException(status_code=400, detail="Este correo tiene un usuario de prueba. Solo se permite una solicitud.")
     
     # Generar username a partir de la inicial del email
     username = email.split("@")[0]  # Solo la primera letra antes del @
@@ -975,7 +983,7 @@ async def test_user_request(email: str, db: Session = Depends(get_db)):
 
     # Crear usuario de prueba
     tester_user = UserInDB(
-        role="tester",
+        role            = "tester",
         username        = username,
         email           = email,
         hashed_password = hashed,
@@ -1001,10 +1009,52 @@ async def test_user_request(email: str, db: Session = Depends(get_db)):
     db.add(log_entry)
     db.commit()
 
-    return {
-            "username": tester_user.username,
-            "password": temp_password
-    }
+    sender_email    = "comercial@actyvalores.com"
+    receiver_email  = email
+    subject         = "Credenciales de Usuario de Prueba"
+    body_html       = f"""
+    <html>
+      <head>
+        <style>
+          body {{ font-family: Arial, sans-serif; margin: 0; padding: 20px; color: #333; }}
+          .content {{ background-color: #f4f4f4; padding: 20px; border-radius: 10px; }}
+          .footer {{ padding-top: 20px; font-size: 12px; color: #666; }}
+          a {{ color: #0073AA; text-decoration: none; }}
+          a:hover {{ text-decoration: underline; }}
+        </style>
+      </head>
+      <body>
+        <div class="content">
+          <h1>Credenciales de Usuario de Prueba</h1>
+          <p>Hola,</p>
+          <p>Has solicitado un usuario de prueba en nuestra plataforma. A continuación, te enviamos tus credenciales de acceso:</p>
+          <p><strong>Usuario:</strong> {username}</p>
+          <p><strong>Contraseña temporal:</strong> {temp_password}</p>
+          <p>Te recomendamos cambiar tu contraseña una vez ingreses al sistema.</p>
+        </div>
+        <div class="footer">
+          <p>Saludos,<br>Equipo de Desarrollo</p>
+          <p><a href="https://app.actyvalores.com">actyvalores.com</a></p>
+        </div>
+      </body>
+    </html>
+    """
+    
+    # Envío de correo vía SendGrid
+    sendgrid_api_key = os.getenv("SENDGRID_API_KEY")
+    message = Mail(
+        from_email      = sender_email,
+        to_emails       = receiver_email,
+        subject         = subject,
+        html_content    = body_html
+    )
+    try:
+        sg = SendGridAPIClient(sendgrid_api_key)
+        sg.send(message)
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Error enviando el correo: {e}")
+    
+    return {"message": "Se han enviado las credenciales al correo proporcionado."}
      
     
 @router.put("/update_password/{email}")
