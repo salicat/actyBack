@@ -1139,3 +1139,37 @@ async def update_user_info(
     db.commit()
 
     return {"message": "Información actualizada correctamente", "user_data": user_data}
+
+@router.post("/user/switch-role/{username}")
+async def switch_role(username: str, db: Session = Depends(get_db)):
+    # Se espera que el username sea "periquito" o "salicat39"
+    print("Recibo usuario:", username)
+    if username not in ["Periquito de los palotes", "Vale Cortes"]:
+        raise HTTPException(status_code=400, detail="Usuario no válido para cambio de rol")
+    
+    if username == "Periquito de los palotes":
+        target_email = "salicat39@gmail.com"
+    else:
+        target_email = "periquito@gmail.com"
+    
+    print("Usare correo:", target_email)
+    
+    # Obtener el perfil de prueba al que se desea cambiar
+    test_user = db.query(UserInDB).filter(UserInDB.email == target_email).first()
+    if not test_user:
+        raise HTTPException(status_code=500, detail="Perfil de prueba no encontrado")
+    
+    # Se genera un nuevo token usando el username recibido en la URL en lugar de test_user.username
+    access_token_expires = timedelta(minutes=ACCESS_TOKEN_EXPIRE_MINUTES)
+    access_token = create_access_token(
+        username      = username,  # Forzamos que el subject sea "periquito" o "salicat39"
+        role          = test_user.role,
+        user_id       = test_user.id_number,
+        user_pk       = test_user.id,
+        user_st       = test_user.user_status,
+        expires_delta = access_token_expires
+    )
+    
+    print("Inicio de cesion con usuario:", test_user.username)
+    
+    return {"message": "Perfil actualizado", "access_token": access_token}
