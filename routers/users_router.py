@@ -378,6 +378,20 @@ async def create_affiliate_user(
     #         msg.attach(part2)
     #         server.sendmail(sender_email, receiver_email, msg.as_string())
 
+    sendgrid_api_key = os.getenv("SENDGRID_API_KEY")
+    message = Mail(
+        from_email      = sender_email,
+        to_emails       = receiver_email,
+        subject         = subject,
+        html_content    = body_html
+    )
+    try:
+        sg = SendGridAPIClient(sendgrid_api_key)
+        sg.send(message)
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Error enviando el correo: {e}")
+    
+    
     if token:
         log_entry = LogsInDb(
             action      = "User Created",

@@ -41,19 +41,19 @@ class RegsInDb(Base):
     mortgage_id     = Column(Integer, ForeignKey("mortgages.id"))
     lender_id       = Column(String, ForeignKey("users.id_number"))
     debtor_id       = Column(String, ForeignKey("users.id_number"))
-    date            = Column(Date)
-    paid            = Column(BigInteger)    #debits from the principal (payments by debtor)
-    concept         = Column(String)        #Pago (extemporaneo / normal) reportado por usuario
-    amount          = Column(BigInteger)    #credits. added to principal / payment (charges )
-    penalty         = Column(BigInteger)  
-    penalty_days    = Column(Integer)  
-    min_payment     = Column(BigInteger)
-    limit_date      = Column(Date)
-    to_main_balance = Column(BigInteger)         
+    date            = Column(Date)          
+    paid            = Column(BigInteger)    #PAGOS from the principal (payments )
+    concept         = Column(String)        #Pago (extemporaneo / normal) Cargos (Generados por system)
+    amount          = Column(BigInteger)    #CARGOS added to principal / (charges )
+    penalty         = Column(BigInteger)        
+    penalty_days    = Column(Integer)       
+    min_payment     = Column(BigInteger)    #pago para quedar al dia
+    limit_date      = Column(Date)                  
+    to_main_balance = Column(BigInteger)    
     comprobante     = Column(String)        #esto es un documento
-    payment_status  = Column(String)  
-    comment         = Column(String)    
-    payment_type    = Column(String)  #pse, transfer...
+    payment_status  = Column(String)        
+    comment         = Column(String)        
+    payment_type    = Column(String)        #pse, transfer...
     
     mortgage    = relationship("MortgageInDB", back_populates="registers")
     lender      = relationship("UserInDB", foreign_keys=[lender_id])
@@ -98,7 +98,7 @@ class MortgageInDB(Base):
     last_update     = Column(Date)
     monthly_payment = Column(BigInteger)
     mortgage_stage  = Column(String)    
-    mortgage_status = Column(String)
+    mortgage_status = Column(String)  #active / on_debt / lawyer
     comments        = Column(String)
     strategy        = Column(String)  #for lenders (acummulate, monthly payment, reinvest)
 
