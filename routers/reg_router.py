@@ -401,12 +401,9 @@ async def generate_system_payment(
     # Ajustar saldo de capital por remanente
     remaining = (last_register.paid or 0) - (last_register.min_payment or 0)
     small_remainder = 0
-    # Guardamos el balance previo para comparar umbral correctamente
     prev_balance = mortgage.current_balance
     if remaining > 0:
-        # Si el remanente supera el umbral, aplicar al capital
         if remaining > (0.05 * prev_balance):
-            # Reducir capital en la hipoteca
             mortgage.current_balance -= remaining
             last_register.to_main_balance = remaining
 
@@ -430,14 +427,13 @@ async def generate_system_payment(
             )
             db.add(capital_register)
         else:
-            # Remanente pequeño descuenta de la próxima cuota
             small_remainder = remaining
     db.commit()
 
-    # Calcular componentes básicos para el cargo mensual
-    interest_component = mortgage.current_balance * mortgage.interest_rate / 100
-    total_charges = interest_component + penalty_amount
-    new_min_payment = total_charges - small_remainder
+    # Calcular cargo mensual usando pago mínimo de la hipoteca
+    base_payment = mortgage.monthly_payment
+    total_amount = base_payment + penalty_amount
+    new_min_payment = total_amount - small_remainder
 
     # Generar registro de cargo por sistema
     limit_due = reg_data.date.replace(day=5) + relativedelta(months=1)
@@ -451,8 +447,8 @@ async def generate_system_payment(
             if penalty_amount > 0
             else "CARGO: Cobro generado por sistema"
         ),
-        paid            = 0,
-        amount          = total_charges,
+        paid            = -small_remainder,
+        amount          = total_amount,
         penalty         = penalty_amount,
         penalty_days    = penalty_days,
         min_payment     = new_min_payment,
@@ -477,7 +473,7 @@ async def generate_system_payment(
     db.add(new_register)
     db.commit()
 
-    return {"message": "Cobro generado por sistema exitosamente"} 
+    return {"message": "Cobro generado por sistema exitosamente"}
 
 
 @router.get("/get_reg/{reg_id}") #LOGS TOKEN ADMIN ONLY
