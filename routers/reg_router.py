@@ -79,7 +79,9 @@ async def register_mortgage_payment(
     db              : Session       = Depends(get_db),
     token           : str           = Header(None)
 ):
+    
     try:
+        
         # Convertir reg_data a diccionario
         reg_data_dict = json.loads(reg_data)
         
@@ -167,7 +169,7 @@ async def register_mortgage_payment(
             debtor_id=debtor_id,
             date=payment_date,
             paid=paid_amount,
-            concept=f"PAGO: {ext} reportado por usuario",
+            concept=f"{ext} reportado por usuario",
             penalty_days=mora_days,
             min_payment=min_payment,
             limit_date=limit_date,
@@ -414,7 +416,7 @@ async def generate_system_payment(
                 debtor_id       = debtor_id,
                 date            = reg_data.date,
                 paid            = remaining,
-                concept         = "PAGO: Abono excedente a capital",
+                concept         = "Abono excedente a capital",
                 amount          = 0,
                 penalty         = 0,
                 penalty_days    = 0,
@@ -443,9 +445,9 @@ async def generate_system_payment(
         debtor_id       = debtor_id,
         date            = reg_data.date,
         concept         = (
-            f"CARGO: Cobro generado por sistema ({penalty_description})"
+            f"Cobro generado por sistema ({penalty_description})"
             if penalty_amount > 0
-            else "CARGO: Cobro generado por sistema"
+            else "Cobro generado por sistema"
         ),
         paid            = -small_remainder,
         amount          = total_amount,
