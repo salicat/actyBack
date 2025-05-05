@@ -348,7 +348,7 @@ async def generate_system_payment(
     db          : Session   = Depends(get_db),
     token       : str       = Header(None)
 ):
-    # --- Validación de token y permisos (sin cambios) ---
+    # --- Validación de token y permisos ---
     if not token:
         raise HTTPException(status_code=401, detail="Token not provided")
     decoded = decode_jwt(token)
@@ -359,17 +359,27 @@ async def generate_system_payment(
     debtor_id = reg_data.debtor_id
 
     # Obtener último corte de sistema
-    last_system = (db.query(RegsInDb).filter(RegsInDb.debtor_id==debtor_id, RegsInDb.comment=="System").order_by(RegsInDb.date.desc()).first())
+    last_system = (
+        db.query(RegsInDb)
+          .filter(RegsInDb.debtor_id==debtor_id, RegsInDb.comment=="System")
+          .order_by(RegsInDb.date.desc())
+          .first()
+    )
 
-    # Obtener último registro aprobado
-    last_register = (db.query(RegsInDb).filter(RegsInDb.debtor_id==debtor_id).order_by(RegsInDb.date.desc()).first())
+    # Obtener último registro aprobado para datos base
+    last_register = (
+        db.query(RegsInDb)
+          .filter(RegsInDb.debtor_id==debtor_id)
+          .order_by(RegsInDb.date.desc())
+          .first()
+    )
     if not last_register or last_register.payment_status.lower() != "approved":
         raise HTTPException(
             status_code = 404 if not last_register else 400,
             detail      = "No hay registros aprobados" if not last_register else "Último registro no aprobado"
         )
 
-    # Fecha de inicio de cómputo de mora
+    # Fecha de inicio de cómputo de mora (para registro, no para cálculo individual)
     start_date = last_system.date if last_system else last_register.limit_date
 
     # Obtener hipoteca asociada
@@ -384,7 +394,8 @@ async def generate_system_payment(
     period_end   = (period_start + relativedelta(months=1)) - relativedelta(days=1)
 
     # 2) traer todos los pagos approved de ese mes
-    payments = (db.query(RegsInDb)
+    payments = (
+        db.query(RegsInDb)
           .filter(
               RegsInDb.debtor_id==debtor_id,
               RegsInDb.payment_status=="approved",
@@ -393,70 +404,89 @@ async def generate_system_payment(
           )
           .order_by(RegsInDb.date.asc())
           .all()
-    )  # lista de pagos en el mes :contentReference[oaicite:0]{index=0}
+    )
 
     total_penalty       = 0
     total_remnant       = 0
     penalty_description = ""
+    total_days          = 0
 
-    # 3) si hay pagos, calcular mora tramo a tramo
+    # 3) si hay pagos, calcular mora respecto a cada limit_date e ajustar remanentes parciales
     if payments:
         for p in payments:
-            print(p.date)
-            print(p.limit_date)
-            days = (p.date - p.limit_date).days  # días reales :contentReference[oaicite:1]{index=1}
-            print(days)
-            if days < 0:
-               days = 0
+            days = max((p.date - p.limit_date).days, 0)
+            total_days += days
             if days > 0:
                 pr = (
                     db.query(PenaltyInDB)
-                      .filter(PenaltyInDB.start_date <= period_start,
-                              PenaltyInDB.end_date   >= period_end)
+                      .filter(
+                          PenaltyInDB.start_date <= period_start,
+                          PenaltyInDB.end_date   >= period_end
+                      )
                       .first()
                 )
                 if not pr:
                     raise HTTPException(400, "No hay interés de mora para el mes")
-                # prorrateo sobre 30 días :contentReference[oaicite:2]{index=2}
-                amt = ((last_register.min_payment * pr.penalty_rate/100)/30) * days
+                amt = ((last_register.min_payment * pr.penalty_rate/100) / 30) * days
                 total_penalty += amt
                 penalty_description += f"+ mora{pr.penalty_rate}%×{days}d "
-            # ajustar remanente de este pago
+
+            # calcular remanente de este pago
             rem = (p.paid or 0) - last_register.min_payment
             if rem > 0:
                 if rem > 0.05 * mortgage.current_balance:
                     mortgage.current_balance -= rem
                     p.to_main_balance = rem
+
+                    # Registro de abono excedente a capital
+                    capital_register = RegsInDb(
+                        mortgage_id     = p.mortgage_id,
+                        lender_id       = p.lender_id,
+                        debtor_id       = debtor_id,
+                        date            = reg_data.date,
+                        paid            = rem,
+                        concept         = "PAGO: Abono excedente a capital",
+                        amount          = 0,
+                        penalty         = 0,
+                        penalty_days    = 0,
+                        min_payment     = 0,
+                        limit_date      = p.limit_date,
+                        to_main_balance = rem,
+                        payment_status  = "approved",
+                        comment         = "System",
+                        payment_type    = None,
+                    )
+                    db.add(capital_register)
                 else:
                     total_remnant += rem
-
-    # 4) si NO hubo pagos en el mes, aplicar 30 días completos y sumar pendiente
+    # 4) si NO hubo pagos en el mes, generar mora por pendiente completo
     else:
-        # saldo mínimo pendiente del mes anterior
         pending = last_register.min_payment
         total_penalty += pending
         penalty_description += f"+ pendiente ant. {pending} "
-        # 30 días de mora sobre ese pendiente :contentReference[oaicite:3]{index=3}
         pr = (
             db.query(PenaltyInDB)
-              .filter(PenaltyInDB.start_date <= period_start,
-                      PenaltyInDB.end_date   >= period_end)
+              .filter(
+                  PenaltyInDB.start_date <= period_start,
+                  PenaltyInDB.end_date   >= period_end
+              )
               .first()
         )
         if not pr:
             raise HTTPException(400, "No hay interés de mora para el mes")
-        amt = ((pending * pr.penalty_rate/100)/30) * 30
+        amt = ((pending * pr.penalty_rate/100) / 30) * 30
         total_penalty += amt
         penalty_description += f"+ mora{pr.penalty_rate}%×30d "
+        total_days = 30
 
     db.commit()  # persiste ajustes de capital y to_main_balance
 
     # ——— CREACIÓN DE NUEVO REGISTRO DE COBRO ———
 
-    base_payment = mortgage.monthly_payment
-    total_amount = base_payment + total_penalty
+    base_payment    = mortgage.monthly_payment
+    total_amount    = base_payment + total_penalty
     new_min_payment = total_amount - total_remnant
-    limit_due = reg_data.date.replace(day=5) + relativedelta(months=1)
+    limit_due       = reg_data.date.replace(day=5) + relativedelta(months=1)
 
     new_register = RegsInDb(
         mortgage_id     = last_register.mortgage_id,
@@ -467,7 +497,7 @@ async def generate_system_payment(
         paid            = -total_remnant,
         amount          = total_amount,
         penalty         = total_penalty,
-        penalty_days    = (reg_data.date - start_date).days,
+        penalty_days    = total_days,
         min_payment     = new_min_payment,
         limit_date      = limit_due,
         to_main_balance = 0,
@@ -480,7 +510,7 @@ async def generate_system_payment(
 
     log_entry = LogsInDb(
         action    = "System Payment Generated",
-        timestamp = datetime.utcnow().isoformat(),
+        timestamp = local_timestamp_str,
         message   = f"Cobro sistema para deudor {debtor_id}",
         user_id   = user_id,
     )
@@ -489,6 +519,7 @@ async def generate_system_payment(
     db.commit()
 
     return {"message": "Cobro generado exitosamente"}
+
 
 
 
