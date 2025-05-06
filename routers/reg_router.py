@@ -388,12 +388,9 @@ async def generate_system_payment(
         raise HTTPException(status_code=404, detail="Hipoteca no encontrada")
 
     # ——— CÁLCULO DE MORA Y REMANENTES ———
-
-    # 1) definir rango del mes
     period_start = reg_data.date.replace(day=1)
     period_end   = (period_start + relativedelta(months=1)) - relativedelta(days=1)
 
-    # 2) traer todos los pagos approved de ese mes
     payments = (
         db.query(RegsInDb)
           .filter(
@@ -406,12 +403,12 @@ async def generate_system_payment(
           .all()
     )
 
+    prev_balance = mortgage.current_balance
     total_penalty       = 0
     total_remnant       = 0
     penalty_description = ""
     total_days          = 0
 
-    # 3) si hay pagos, calcular mora respecto a cada limit_date e ajustar remanentes parciales
     if payments:
         for p in payments:
             days = max((p.date - p.limit_date).days, 0)
@@ -431,14 +428,11 @@ async def generate_system_payment(
                 total_penalty += amt
                 penalty_description += f"+ mora{pr.penalty_rate}%×{days}d "
 
-            # calcular remanente de este pago
-            rem = (p.paid or 0) - last_register.min_payment
+            rem = (p.paid or 0) - p.min_payment
             if rem > 0:
                 if rem > 0.05 * mortgage.current_balance:
                     mortgage.current_balance -= rem
                     p.to_main_balance = rem
-
-                    # Registro de abono excedente a capital
                     capital_register = RegsInDb(
                         mortgage_id     = p.mortgage_id,
                         lender_id       = p.lender_id,
@@ -459,7 +453,6 @@ async def generate_system_payment(
                     db.add(capital_register)
                 else:
                     total_remnant += rem
-    # 4) si NO hubo pagos en el mes, generar mora por pendiente completo
     else:
         pending = last_register.min_payment
         total_penalty += pending
@@ -481,9 +474,12 @@ async def generate_system_payment(
 
     db.commit()  # persiste ajustes de capital y to_main_balance
 
-    # ——— CREACIÓN DE NUEVO REGISTRO DE COBRO ———
+    # ——— Recalcular mensualidad tras abonos a capital (solo esta sección modificada) ———
+    new_monthly_payment = mortgage.current_balance * mortgage.interest_rate / 100
+    mortgage.monthly_payment = new_monthly_payment
 
-    base_payment    = mortgage.monthly_payment
+    # ——— CREACIÓN DE NUEVO REGISTRO DE COBRO ———
+    base_payment    = new_monthly_payment
     total_amount    = base_payment + total_penalty
     new_min_payment = total_amount - total_remnant
     limit_due       = reg_data.date.replace(day=5) + relativedelta(months=1)

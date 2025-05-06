@@ -262,10 +262,10 @@ def get_mortgages_by_debtor(debtor_id: str, db: Session = Depends(get_db)):
         payments_pendings = db.query(RegsInDb).filter(RegsInDb.payment_status == "pending", RegsInDb.debtor_id == debtor_id).count()
 
         return {
-            "mortgage_info": mortgage_info, 
-            "payments_pendings": payments_pendings, 
-            "email": debtor_mail, 
-            "is_first_login": is_first_login
+            "mortgage_info"     : mortgage_info, 
+            "payments_pendings" : payments_pendings, 
+            "email"             : debtor_mail, 
+            "is_first_login"    : is_first_login
         }
 
 
