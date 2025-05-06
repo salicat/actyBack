@@ -79,89 +79,129 @@ async def register_mortgage_payment(
     db: Session = Depends(get_db),
     token: str = Header(None),
 ):
-    # ——— DEBUGGING PRINTS ———
-    print("=== register_mortgage_payment entry ===")
-    print("Raw reg_data:", reg_data)
-    print("Payment receipt provided?:", bool(payment_receipt))
+    # =================================================================
+    # 1. INICIALIZACIÓN Y DEBUGGING
+    # =================================================================
+    print("\n=== INICIO REGISTRO DE PAGO ===")
+    print("[DEBUG] Datos crudos recibidos:", reg_data[:100] + "...")  # Muestra preview
 
-    # ——— TOKEN & AUTH ———
+    # =================================================================
+    # 2. AUTENTICACIÓN Y AUTORIZACIÓN
+    # =================================================================
     if not token:
-        print("No token")
-        raise HTTPException(401, "Token not provided")
+        print("[ERROR] No se recibió token")
+        raise HTTPException(401, "Se requiere autenticación")
+
     try:
         decoded = decode_jwt(token)
-        print("Decoded JWT:", decoded)
-    except Exception as ex:
-        print("JWT decode error:", ex)
-        raise HTTPException(401, "Invalid token")
-    user_id = decoded.get("id")
+        user_id = decoded.get("id")
+        user_role = decoded.get("role")
+        print(f"[DEBUG] Usuario autenticado | ID: {user_id} | Rol: {user_role}")
+    except Exception as e:
+        print(f"[ERROR] Fallo decodificación JWT: {str(e)}")
+        raise HTTPException(401, "Token inválido")
 
-    # ——— PARSE reg_data JSON ———
+    # =================================================================
+    # 3. PARSEO Y VALIDACIÓN DE DATOS
+    # =================================================================
     try:
         data = json.loads(reg_data)
-        print("Parsed reg_data dict:", data)
-    except json.JSONDecodeError as ex:
-        print("JSON decode error:", ex)
-        raise HTTPException(400, "Formato JSON inválido en reg_data")
+        print("[DEBUG] Datos parseados:", json.dumps(data, indent=2))
+    except json.JSONDecodeError as e:
+        print(f"[ERROR] JSON inválido: {str(e)}")
+        raise HTTPException(400, "Formato JSON incorrecto")
 
-    # ——— EXTRACT FIELDS & VALIDATE ———
-    mortgage_id    = data.get("mortgage_id")
-    paid_amount    = data.get("paid")
-    payment_date_s = data.get("payment_date")
-    debtor_id_in   = data.get("debtor_id")
-    min_payment_in = data.get("min_payment")
-    limit_date_in  = data.get("limit_date")
+    # Campos obligatorios
+    required_fields = ["mortgage_id", "paid", "payment_date"]
+    missing = [field for field in required_fields if field not in data]
+    if missing:
+        print(f"[ERROR] Campos faltantes: {missing}")
+        raise HTTPException(400, f"Campos obligatorios faltantes: {', '.join(missing)}")
 
-    if mortgage_id is None or paid_amount is None or payment_date_s is None:
-        print("Missing one of mortgage_id/paid/payment_date")
-        raise HTTPException(400, "Faltan campos obligatorios en reg_data")
+    mortgage_id = data["mortgage_id"]
+    paid_amount = float(data["paid"])  # Conversión explícita
+    payment_date_str = data["payment_date"]
+    
+    print(f"[DEBUG] Datos clave recibidos:")
+    print(f"• mortgage_id: {mortgage_id}")
+    print(f"• paid_amount: {paid_amount}")
+    print(f"• payment_date: {payment_date_str}")
 
-    print(f"Fields → mortgage_id: {mortgage_id}, paid: {paid_amount}, payment_date: {payment_date_s}")
-
-    # ——— LOAD MORTGAGE ———
-    mortgage = db.query(MortgageInDB).filter(MortgageInDB.id == mortgage_id).first()
+    # =================================================================
+    # 4. VALIDACIÓN DE HIPOTECA
+    # =================================================================
+    mortgage = db.query(MortgageInDB).get(mortgage_id)
     if not mortgage:
-        print("Mortgage not found")
+        print(f"[ERROR] Hipoteca no existe: {mortgage_id}")
         raise HTTPException(404, "Hipoteca no encontrada")
+    
+    print(f"[DEBUG] Hipoteca encontrada:")
+    print(f"• Lender ID: {mortgage.lender_id}")
+    print(f"• Deudor ID: {mortgage.debtor_id}")
+    print(f"• Balance actual: {mortgage.current_balance}")
 
-    # ——— FIND LAST SYSTEM REGISTER ———
-    last_sys = (
+    # =================================================================
+    # 5. OBTENER REGISTRO DE CORTE PREVIO (CRÍTICO)
+    # =================================================================
+    last_sys_reg = (
         db.query(RegsInDb)
-          .filter(RegsInDb.mortgage_id==mortgage_id, RegsInDb.comment=="System")
-          .order_by(RegsInDb.date.desc())
-          .first()
+        .filter(
+            RegsInDb.mortgage_id == mortgage_id,
+            RegsInDb.comment == "System"
+        )
+        .order_by(RegsInDb.date.desc())
+        .first()
     )
 
-    # ——— DETERMINE debtor_id, min_payment, limit_date ———
-    debtor_id = last_sys.debtor_id if last_sys else debtor_id_in
-    min_payment = last_sys.min_payment if last_sys else min_payment_in
-    limit_date_raw = last_sys.limit_date if last_sys else limit_date_in
+    if not last_sys_reg:
+        print("[ERROR] No hay registro de corte previo")
+        raise HTTPException(400, "No se encontró corte de sistema previo")
+    
+    print("[DEBUG] Último registro de sistema:")
+    print(f"• Fecha corte: {last_sys_reg.date}")
+    print(f"• Pago mínimo: {last_sys_reg.min_payment}")
+    print(f"• Fecha límite: {last_sys_reg.limit_date}")
 
-    # parse limit_date to date
-    if isinstance(limit_date_raw, str):
-        limit_date = datetime.strptime(limit_date_raw, "%Y-%m-%d").date()
-    else:
-        limit_date = limit_date_raw
+    # =================================================================
+    # 6. VALIDACIÓN DE FECHAS (CORRECCIÓN CRÍTICA)
+    # =================================================================
+    try:
+        payment_date = datetime.strptime(payment_date_str, "%Y-%m-%d").date()
+        limit_date = last_sys_reg.limit_date
+        
+        print(f"[DEBUG] Fechas procesadas:")
+        print(f"• Fecha pago: {payment_date}")
+        print(f"• Fecha límite: {limit_date}")
+        
+        # Validación fecha futura
+        if payment_date > datetime.now().date():
+            print("[ERROR] Fecha de pago futura")
+            raise HTTPException(400, "No se permiten fechas futuras")
+            
+    except ValueError as e:
+        print(f"[ERROR] Formato de fecha inválido: {str(e)}")
+        raise HTTPException(400, "Formato de fecha debe ser YYYY-MM-DD")
 
-    # ——— DUPLICATE CHECK ———
-    payment_date = datetime.strptime(payment_date_s, "%Y-%m-%d").date()
-    dup = (
-        db.query(RegsInDb)
-          .filter(
-              RegsInDb.mortgage_id==mortgage_id,
-              RegsInDb.debtor_id==debtor_id,
-              RegsInDb.date==payment_date,
-              RegsInDb.paid==paid_amount,
-          )
-          .first()
-    )
-    if dup:
-        print("Duplicate payment detected")
-        raise HTTPException(400, "Pago duplicado")
+    # =================================================================
+    # 7. DETECCIÓN DE DUPLICADOS (MEJORADO)
+    # =================================================================
+    duplicate = db.query(RegsInDb).filter(
+        RegsInDb.mortgage_id == mortgage_id,
+        RegsInDb.date == payment_date,
+        RegsInDb.paid == paid_amount,
+        RegsInDb.payment_status.in_(["pending", "approved"])
+    ).first()
 
-    # ——— HANDLE UPLOAD ———
+    if duplicate:
+        print(f"[ERROR] Pago duplicado | ID existente: {duplicate.id}")
+        raise HTTPException(400, "Pago ya registrado con estos datos")
+
+    # =================================================================
+    # 8. MANEJO DE COMPROBANTES (CORRECCIÓN SEGURIDAD)
+    # =================================================================
     receipt_path = None
     payment_type = "PSE"
+    
     if payment_receipt:
         upload_folder = "./uploads"
         os.makedirs(upload_folder, exist_ok=True)
@@ -171,47 +211,79 @@ async def register_mortgage_payment(
             shutil.copyfileobj(payment_receipt.file, buf)
         save_file_to_db(db, "mortgage_payment", mortgage_id, "payment_receipt", receipt_path)
         payment_type = "consignación bancaria"
-        print("Saved receipt to", receipt_path)
 
-    # ——— CALCULATE MORA ———
-    mora_days = (payment_date - limit_date).days if payment_date > limit_date else 0
-    ext = "extemporáneo" if mora_days > 0 else "normal"
-    print(f"mora_days={mora_days}, type={ext}")
+    # =================================================================
+    # 9. CÁLCULO DE MORA (CORRECCIÓN LÓGICA)
+    # =================================================================
+    mora_days = max((payment_date - limit_date).days, 0)  # Solo días positivos
+    payment_status = "pending"
+    
+    print(f"[DEBUG] Cálculo de mora:")
+    print(f"• Días calculados: {mora_days}")
+    print(f"• Tipo pago: {'Extemporáneo' if mora_days > 0 else 'En fecha'}")
 
-    # ——— CREATE REGISTER ———
-    new_reg = RegsInDb(
-        mortgage_id    = mortgage_id,
-        lender_id      = mortgage.lender_id,
-        debtor_id      = debtor_id,
-        date           = payment_date,
-        paid           = paid_amount,
-        concept        = f"Pago {ext} reportado por usuario",
-        penalty_days   = mora_days,
-        min_payment    = min_payment,
-        limit_date     = limit_date,
-        comprobante    = receipt_path,
-        payment_status = "pending",
-        comment        = f"Pagado con {mora_days} días de mora" if mora_days>0 else "Pago en fecha",
-        payment_type   = payment_type,
-    )
+    # =================================================================
+    # 10. CREACIÓN DE REGISTRO (MEJORA DE DATA INTEGRITY)
+    # =================================================================
+    try:
+        new_reg = RegsInDb(
+            mortgage_id     = mortgage_id,
+            lender_id       = mortgage.lender_id,
+            debtor_id       = mortgage.debtor_id,  # Siempre de la hipoteca
+            date            = payment_date,
+            paid            = paid_amount,
+            min_payment     = last_sys_reg.min_payment,
+            limit_date      = last_sys_reg.limit_date,  # Usar siempre del sistema
+            penalty_days    = mora_days,
+            comprobante     = receipt_path,
+            payment_status  = payment_status,
+            payment_type    = payment_type,
+            concept         = f"Pago {'con mora' if mora_days > 0 else 'normal'} reportado",
+            comment         = f"Registrado por usuario ID: {user_id}"
+        )
+        
+        db.add(new_reg)
+        db.flush()  # Forzar generación de ID
+        print(f"[DEBUG] Nuevo registro creado | ID: {new_reg.id}")
+        
+    except Exception as e:
+        print(f"[ERROR] Error creando registro: {str(e)}")
+        db.rollback()
+        raise HTTPException(500, "Error interno registrando pago")
 
-    # ——— LOG & COMMIT ———
-    log = LogsInDb(
-        action    = "Payment Receipt Uploaded" if payment_receipt else "Payment Reported (PSE)",
-        timestamp = datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
-        message   = f"Pago reportado para hipoteca ID: {mortgage_id}",
-        user_id   = user_id
-    )
-    db.add(log)
-    db.add(new_reg)
-    db.commit()
-    print("Committed log and new register, id:", new_reg.id)
+    # =================================================================
+    # 11. REGISTRO DE LOG (MEJORA TRAZABILIDAD)
+    # =================================================================
+    try:
+        log_entry = LogsInDb(
+            action="REGISTRO_PAGO",
+            timestamp=datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
+            message=f"Nuevo pago ID: {new_reg.id} | Monto: {paid_amount} | Días mora: {mora_days}",
+            user_id=user_id
+        )
+        db.add(log_entry)
+        db.commit()
+        print("[DEBUG] Transacción completada exitosamente")
+        
+    except Exception as e:
+        print(f"[ERROR] Error en commit final: {str(e)}")
+        db.rollback()
+        raise HTTPException(500, "Error finalizando transacción")
 
-    # ——— RESPONSE ———
-    msg = f"Pago reportado con éxito ({payment_type})."
-    if mora_days > 0:
-        msg += f" Días en mora: {mora_days}"
-    return {"message": msg}
+    # =================================================================
+    # 12. RESPUESTA FINAL
+    # =================================================================
+    response_msg = {
+        "message": "Pago registrado exitosamente",
+        "details": {
+            "payment_id": new_reg.id,
+            "amount": paid_amount,
+            "due_days": mora_days,
+            "receipt": bool(receipt_path)
+        }
+    }
+    
+    return {"message" : response_msg}
 
 
 @router.get("/pending_regs/{status}")  #LOGS TOKEN
@@ -344,179 +416,203 @@ async def get_regs(debtor_id: str, db: Session = Depends(get_db), token: str = H
 
 @router.post("/closing_date/")
 async def generate_system_payment(
-    reg_data    : SystemReg,
-    db          : Session   = Depends(get_db),
-    token       : str       = Header(None)
+    reg_data: SystemReg,
+    db: Session = Depends(get_db),
+    token: str = Header(None)
 ):
-    # --- Validación de token y permisos ---
+    # ----------------------------------
+    # 1. DECLARACIÓN DE VARIABLES CLAVE
+    # ----------------------------------
+    total_penalty = 0.0       # Acumulado de mora
+    total_remnant = 0.0       # Excedentes no aplicados a capital
+    total_days = 0            # Días totales de mora
+    penalty_description = ""  # Detalle de mora
+    pending_payment = 0.0     # Saldo pendiente del último registro
+    
+    print(f"\n[DEBUG] Iniciando cierre para deudor {reg_data.debtor_id} - Mes: {reg_data.date.strftime('%Y-%m')}")
+
+    # ----------------------------------
+    # 2. VALIDACIONES Y CONFIGURACIÓN
+    # ----------------------------------
+    # 2.1 Validación de token y permisos
     if not token:
-        raise HTTPException(status_code=401, detail="Token not provided")
+        raise HTTPException(401, "Token requerido")
+    
     decoded = decode_jwt(token)
     if decoded.get("role") != "admin":
-        raise HTTPException(status_code=403, detail="No tienes permiso")
+        raise HTTPException(403, "Acceso denegado")
+    
     user_id = decoded.get("id")
-
     debtor_id = reg_data.debtor_id
 
-    # Obtener último corte de sistema
-    last_system = (
-        db.query(RegsInDb)
-          .filter(RegsInDb.debtor_id==debtor_id, RegsInDb.comment=="System")
-          .order_by(RegsInDb.date.desc())
-          .first()
-    )
+    # 2.2 Restricción mensual
+    month_start = reg_data.date.replace(day=1)
+    month_end = (month_start + relativedelta(months=1)) - relativedelta(days=1)
+    
+    existing_run = db.query(RegsInDb).filter(
+        RegsInDb.debtor_id == debtor_id,
+        RegsInDb.comment == "System",
+        RegsInDb.date.between(month_start, month_end)
+    ).first()
+    
+    if existing_run:
+        raise HTTPException(400, f"Cierre ya realizado para {month_start.strftime('%Y-%m')}")
 
-    # Obtener último registro aprobado para datos base
-    last_register = (
-        db.query(RegsInDb)
-          .filter(RegsInDb.debtor_id==debtor_id)
-          .order_by(RegsInDb.date.desc())
-          .first()
-    )
+    # 2.3 Obtener último registro aprobado
+    last_register = db.query(RegsInDb).filter(
+        RegsInDb.debtor_id == debtor_id
+    ).order_by(RegsInDb.date.desc()).first()
+    
     if not last_register or last_register.payment_status.lower() != "approved":
-        raise HTTPException(
-            status_code = 404 if not last_register else 400,
-            detail      = "No hay registros aprobados" if not last_register else "Último registro no aprobado"
-        )
+        error_msg = "No hay registros aprobados" if not last_register else "Último registro no aprobado"
+        raise HTTPException(400, error_msg)
 
-    # Fecha de inicio de cómputo de mora (para registro, no para cálculo individual)
-    start_date = last_system.date if last_system else last_register.limit_date
+    pending_payment = last_register.paid
+    print(f"[DEBUG] Último pago mínimo: {pending_payment}")
 
-    # Obtener hipoteca asociada
-    mortgage = db.query(MortgageInDB).filter(MortgageInDB.id == last_register.mortgage_id).first()
+    # ----------------------------------
+    # 3. CONFIGURACIÓN INICIAL
+    # ----------------------------------
+    mortgage = db.query(MortgageInDB).get(last_register.mortgage_id)
     if not mortgage:
-        raise HTTPException(status_code=404, detail="Hipoteca no encontrada")
+        raise HTTPException(404, "Hipoteca no encontrada")
+    
+    print(f"[DEBUG] Hipoteca actual: Balance={mortgage.current_balance} - Cuota={mortgage.monthly_payment}")
 
-    # ——— CÁLCULO DE MORA Y REMANENTES ———
-    period_start = reg_data.date.replace(day=1)
-    period_end   = (period_start + relativedelta(months=1)) - relativedelta(days=1)
+    # 3.1 Obtener TODOS los pagos del mes
+    payments = db.query(RegsInDb).filter(
+        RegsInDb.debtor_id == debtor_id,
+        RegsInDb.payment_status == "approved",
+        RegsInDb.date.between(month_start, month_end)
+    ).order_by(RegsInDb.date.asc()).all()
+    
+    print(f"[DEBUG] Pagos encontrados en el mes: {len(payments)}")
 
-    payments = (
-        db.query(RegsInDb)
-          .filter(
-              RegsInDb.debtor_id==debtor_id,
-              RegsInDb.payment_status=="approved",
-              RegsInDb.date >= period_start,
-              RegsInDb.date <= period_end
-          )
-          .order_by(RegsInDb.date.asc())
-          .all()
-    )
-
-    prev_balance = mortgage.current_balance
-    total_penalty       = 0
-    total_remnant       = 0
-    penalty_description = ""
-    total_days          = 0
-
+    # ----------------------------------
+    # 4. PROCESAR CADA PAGO INDIVIDUALMENTE
+    # ----------------------------------
     if payments:
-        for p in payments:
-            days = max((p.date - p.limit_date).days, 0)
-            total_days += days
-            if days > 0:
-                pr = (
-                    db.query(PenaltyInDB)
-                      .filter(
-                          PenaltyInDB.start_date <= period_start,
-                          PenaltyInDB.end_date   >= period_end
-                      )
-                      .first()
-                )
-                if not pr:
-                    raise HTTPException(400, "No hay interés de mora para el mes")
-                amt = ((last_register.min_payment * pr.penalty_rate/100) / 30) * days
-                total_penalty += amt
-                penalty_description += f"+ mora{pr.penalty_rate}%×{days}d "
+        penalty_rate = db.query(PenaltyInDB).filter(
+            PenaltyInDB.start_date <= month_start,
+            PenaltyInDB.end_date >= month_end).first()
+        
+        if not penalty_rate:
+            raise HTTPException(400, "Tasa de mora no configurada")
 
-            rem = (p.paid or 0) - p.min_payment
-            if rem > 0:
-                if rem > 0.05 * mortgage.current_balance:
-                    mortgage.current_balance -= rem
-                    p.to_main_balance = rem
-                    capital_register = RegsInDb(
-                        mortgage_id     = p.mortgage_id,
-                        lender_id       = p.lender_id,
-                        debtor_id       = debtor_id,
-                        date            = reg_data.date,
-                        paid            = rem,
-                        concept         = "PAGO: Abono excedente a capital",
-                        amount          = 0,
-                        penalty         = 0,
-                        penalty_days    = 0,
-                        min_payment     = 0,
-                        limit_date      = p.limit_date,
-                        to_main_balance = rem,
-                        payment_status  = "approved",
-                        comment         = "System",
-                        payment_type    = None,
+        print(f"[DEBUG] Tasa de mora: {penalty_rate.penalty_rate}%")
+
+        for pago in payments:
+            print(f"\n[DEBUG] Procesando pago ID: {pago.id}")
+            print(f"• Fecha pago: {pago.date} | Fecha límite: {pago.limit_date}")
+            print(f"• Pagado: {pago.paid} | Pago mínimo requerido: {pago.min_payment}")
+
+            # 4.1 Calcular días de mora para ESTE pago
+            dias_mora = max((pago.date - pago.limit_date).days, 0)
+            total_days += dias_mora
+            print(f"• Días mora: {dias_mora}")
+
+            # 4.2 Calcular mora si hay atraso
+            if dias_mora > 0:
+                mora = (pago.min_payment * penalty_rate.penalty_rate / 100) / 30 * dias_mora
+                total_penalty += mora
+                penalty_description += f"+ {dias_mora}d×{penalty_rate.penalty_rate}% "
+                print(f"• Mora calculada: {mora} | Total acumulado: {total_penalty}")
+
+            # 4.3 Calcular excedente (lo pagado - mínimo requerido)
+            excedente = pago.paid - pago.min_payment
+            if excedente > 0:
+                print(f"• Excedente detectado: {excedente}")
+                
+                # 4.4 Aplicar a capital si supera 5%
+                if excedente > (mortgage.current_balance * 0.05):
+                    print(f"• Aplicando {excedente} a capital (5%={mortgage.current_balance*0.05})")
+                    
+                    # Crear registro de abono
+                    capital_reg = RegsInDb(
+                        mortgage_id=mortgage.id,
+                        debtor_id=debtor_id,
+                        date=reg_data.date,
+                        paid=excedente,
+                        concept="Abono a capital",
+                        to_main_balance=excedente,
+                        payment_status="approved",
+                        comment="System"
                     )
-                    db.add(capital_register)
+                    db.add(capital_reg)
+                    mortgage.current_balance -= excedente
                 else:
-                    total_remnant += rem
+                    total_remnant += excedente
+                    print(f"• Excedente acumulado para descuento: {total_remnant}")
+
+        db.commit()  # Persistir abonos a capital
+
     else:
-        pending = last_register.min_payment
-        total_penalty += pending
-        penalty_description += f"+ pendiente ant. {pending} "
-        pr = (
-            db.query(PenaltyInDB)
-              .filter(
-                  PenaltyInDB.start_date <= period_start,
-                  PenaltyInDB.end_date   >= period_end
-              )
-              .first()
-        )
-        if not pr:
-            raise HTTPException(400, "No hay interés de mora para el mes")
-        amt = ((pending * pr.penalty_rate/100) / 30) * 30
-        total_penalty += amt
-        penalty_description += f"+ mora{pr.penalty_rate}%×30d "
-        total_days = 30
+        print("[DEBUG] No hay pagos en el mes - Aplicando mora completa")
+        penalty_rate = db.query(PenaltyInDB).filter(
+            PenaltyInDB.start_date <= month_start,
+            PenaltyInDB.end_date >= month_end).first()
+        
+        if penalty_rate:
+            total_penalty = pending_payment * (penalty_rate.penalty_rate / 100)
+            total_days = 30  # Asumir mes completo sin pagos
+            penalty_description = f"Mora completa {penalty_rate.penalty_rate}%"
 
-    db.commit()  # persiste ajustes de capital y to_main_balance
-
-    # ——— Recalcular mensualidad tras abonos a capital (solo esta sección modificada) ———
-    new_monthly_payment = mortgage.current_balance * mortgage.interest_rate / 100
+    # ----------------------------------
+    # 5. CALCULAR NUEVOS VALORES
+    # ----------------------------------
+    # 5.1 Nueva cuota basada en balance actual
+    new_monthly_payment = mortgage.current_balance * (mortgage.interest_rate / 100)
     mortgage.monthly_payment = new_monthly_payment
-
-    # ——— CREACIÓN DE NUEVO REGISTRO DE COBRO ———
-    base_payment    = new_monthly_payment
-    total_amount    = base_payment + total_penalty
+    
+    # 5.2 Total a cobrar = Cuota + Mora - Excedentes aplicables
+    total_amount = new_monthly_payment + total_penalty
     new_min_payment = total_amount - total_remnant
-    limit_due       = reg_data.date.replace(day=5) + relativedelta(months=1)
+    
+    print(f"\n[DEBUG] Resumen final:")
+    print(f"• Nueva cuota: {new_monthly_payment}")
+    print(f"• Total mora: {total_penalty}")
+    print(f"• Excedentes aplicables: {total_remnant}")
+    print(f"• Pago mínimo resultante: {new_min_payment}")
 
+    # ----------------------------------
+    # 6. GENERAR REGISTRO DE COBRO
+    # ----------------------------------
+    limit_due = reg_data.date.replace(day=5) + relativedelta(months=1)
+    
     new_register = RegsInDb(
-        mortgage_id     = last_register.mortgage_id,
-        lender_id       = last_register.lender_id,
-        debtor_id       = debtor_id,
-        date            = reg_data.date,
-        concept         = f"Cobro sistema ({penalty_description.strip()})" if total_penalty>0 else "Cobro sistema",
-        paid            = -total_remnant,
-        amount          = total_amount,
-        penalty         = total_penalty,
-        penalty_days    = total_days,
-        min_payment     = new_min_payment,
-        limit_date      = limit_due,
-        to_main_balance = 0,
-        payment_status  = "approved",
-        comment         = "System",
-        payment_type    = None,
+        mortgage_id=mortgage.id,
+        debtor_id=debtor_id,
+        date=reg_data.date,
+        concept=f"Cobro sistema {penalty_description.strip()}" if total_penalty else "Cobro sistema",
+        amount=total_amount,
+        penalty=total_penalty,
+        penalty_days=total_days,
+        # KEY: Usar paid para llevar excedentes al siguiente mes
+        paid=-total_remnant,  
+        min_payment=new_min_payment,
+        limit_date=limit_due,
+        payment_status="approved",
+        comment="System"
     )
-
+    
+    # ----------------------------------
+    # 7. ACTUALIZACIONES FINALES
+    # ----------------------------------
     mortgage.last_update = reg_data.date
 
-    log_entry = LogsInDb(
-        action    = "System Payment Generated",
-        timestamp = local_timestamp_str,
-        message   = f"Cobro sistema para deudor {debtor_id}",
-        user_id   = user_id,
+    log = LogsInDb(
+        action="Cierre de sistema",
+        message=f"Generado para {debtor_id} - Pago mínimo: {new_min_payment}",
+        user_id=user_id,
+        timestamp=datetime.now().strftime("%Y-%m-%d %H:%M:%S")
     )
-    db.add(log_entry)
+    
+    db.add(log)
     db.add(new_register)
     db.commit()
 
-    return {"message": "Cobro generado exitosamente"}
-
-
+    print("[DEBUG] Registro generado exitosamente")
+    return {"message": "Cobro generado", "detalle": f"Nuevo pago mínimo: {new_min_payment}"}
 
 
 @router.get("/get_reg/{reg_id}") #LOGS TOKEN ADMIN ONLY
