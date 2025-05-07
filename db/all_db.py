@@ -42,12 +42,12 @@ class RegsInDb(Base):
     lender_id       = Column(String, ForeignKey("users.id_number"))
     debtor_id       = Column(String, ForeignKey("users.id_number"))
     date            = Column(Date)          
-    paid            = Column(BigInteger)    #PAGOS from the principal (payments )
+    paid            = Column(BigInteger)    #PAGOS hecho por el deudor (payments)
     concept         = Column(String)        #Pago (extemporaneo / normal) Cargos (Generados por system)
-    amount          = Column(BigInteger)    #CARGOS added to principal / (charges )
-    penalty         = Column(BigInteger)        
+    amount          = Column(BigInteger)    #CARGOS intereses corrientes / (charges )
+    penalty         = Column(BigInteger)    #MORA    
     penalty_days    = Column(Integer)       
-    min_payment     = Column(BigInteger)    #pago para quedar al dia
+    min_payment     = Column(BigInteger)    #Sumatoria de pagos para quedar al dia
     limit_date      = Column(Date)                  
     to_main_balance = Column(BigInteger)    
     comprobante     = Column(String)        #esto es un documento
