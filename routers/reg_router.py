@@ -106,7 +106,9 @@ async def register_mortgage_payment(
     # =================================================================
     try:
         data = json.loads(reg_data)
-        print("[DEBUG] Datos parseados:", json.dumps(data, indent=2))
+        print("\n[DEBUG] Datos recibidos en la petición:")
+        for key, value in data.items():
+            print(f"RECIBIDO → {key}: {value}")
     except json.JSONDecodeError as e:
         print(f"[ERROR] JSON inválido: {str(e)}")
         raise HTTPException(400, "Formato JSON incorrecto")
@@ -149,18 +151,21 @@ async def register_mortgage_payment(
             RegsInDb.mortgage_id == mortgage_id,
             RegsInDb.comment == "System"
         )
-        .order_by(RegsInDb.date.desc())
+        .order_by(
+            RegsInDb.date.desc(),   # Primero por fecha descendente
+            RegsInDb.id.desc()      # Luego por ID descendente (asegura tomar el último creado)
+        )
         .first()
     )
 
-    if not last_sys_reg:
-        print("[ERROR] No hay registro de corte previo")
-        raise HTTPException(400, "No se encontró corte de sistema previo")
-    
-    print("[DEBUG] Último registro de sistema:")
-    print(f"• Fecha corte: {last_sys_reg.date}")
-    print(f"• Pago mínimo: {last_sys_reg.min_payment}")
-    print(f"• Fecha límite: {last_sys_reg.limit_date}")
+    if last_sys_reg:
+        print("\n[DEBUG] Campos del último registro de sistema:")
+        registro = db.query(RegsInDb).filter(RegsInDb.id == last_sys_reg.id).first().__dict__
+        for key, value in registro.items():
+            if not key.startswith('_'):  # Filtramos atributos internos de SQLAlchemy
+                print(f"{key} => {value}")
+    else:
+        print("\n[DEBUG] No se encontraron registros de sistema anteriores")
 
     # =================================================================
     # 6. VALIDACIÓN DE FECHAS (CORRECCIÓN CRÍTICA)
@@ -515,7 +520,7 @@ async def generate_system_payment(
             if dias_mora > 0:
                 mora = (pago.min_payment * penalty_rate.penalty_rate / 100) / 30 * dias_mora
                 total_penalty += mora
-                penalty_description += f"+ {dias_mora}d×{penalty_rate.penalty_rate}% "
+                penalty_description += f"+ {dias_mora} dia × {penalty_rate.penalty_rate}% "
                 print(f"• Mora calculada: {mora} | Total acumulado: {total_penalty}")
 
             # 4.3 Calcular excedente (lo pagado - mínimo requerido)
@@ -529,14 +534,20 @@ async def generate_system_payment(
                     
                     # Crear registro de abono
                     capital_reg = RegsInDb(
-                        mortgage_id=mortgage.id,
-                        debtor_id=debtor_id,
-                        date=reg_data.date,
-                        paid=excedente,
-                        concept="Abono a capital",
-                        to_main_balance=excedente,
-                        payment_status="approved",
-                        comment="System"
+                        mortgage_id     = mortgage.id,
+                        lender_id       = mortgage.lender_id,
+                        debtor_id       = debtor_id,
+                        date            = reg_data.date,
+                        paid            = excedente,
+                        concept         = "Abono a capital",
+                        amount          = 0,
+                        penalty         = 0,
+                        penalty_days    = 0,
+                        min_payment     = 0,
+                        limit_date      = pago.limit_date,
+                        to_main_balance = excedente,
+                        payment_status  = "approved",
+                        comment         = "System"
                     )
                     db.add(capital_reg)
                     mortgage.current_balance -= excedente
@@ -555,7 +566,7 @@ async def generate_system_payment(
         if penalty_rate:
             total_penalty = pending_payment * (penalty_rate.penalty_rate / 100)
             total_days = 30  # Asumir mes completo sin pagos
-            penalty_description = f"Mora completa {penalty_rate.penalty_rate}%"
+            penalty_description = f"Mes sin pago interes de mora: {penalty_rate.penalty_rate}%"
 
     # ----------------------------------
     # 5. CALCULAR NUEVOS VALORES
@@ -580,19 +591,22 @@ async def generate_system_payment(
     limit_due = reg_data.date.replace(day=5) + relativedelta(months=1)
     
     new_register = RegsInDb(
-        mortgage_id=mortgage.id,
-        debtor_id=debtor_id,
-        date=reg_data.date,
-        concept=f"Cobro sistema {penalty_description.strip()}" if total_penalty else "Cobro sistema",
-        amount=total_amount,
-        penalty=total_penalty,
-        penalty_days=total_days,
+        mortgage_id         = mortgage.id,
+        lender_id           = mortgage.lender_id,
+        debtor_id           = debtor_id,
+        date                = reg_data.date,
+        concept             = f"Cobro generado {penalty_description.strip()}" if total_penalty else "Cobro generado",
+        amount              = total_amount,
+        penalty             = total_penalty,
+        penalty_days        = total_days,
         # KEY: Usar paid para llevar excedentes al siguiente mes
-        paid=-total_remnant,  
-        min_payment=new_min_payment,
-        limit_date=limit_due,
-        payment_status="approved",
-        comment="System"
+        paid                =-total_remnant,  
+        min_payment         = new_min_payment,
+        limit_date          = limit_due,
+        to_main_balance     = 0,
+        payment_status      = "approved",
+        comment             = "System",
+        payment_type        = None,
     )
     
     # ----------------------------------
@@ -601,10 +615,10 @@ async def generate_system_payment(
     mortgage.last_update = reg_data.date
 
     log = LogsInDb(
-        action="Cierre de sistema",
-        message=f"Generado para {debtor_id} - Pago mínimo: {new_min_payment}",
-        user_id=user_id,
-        timestamp=datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+        action    = "System Payment Generated",
+        timestamp = local_timestamp_str,
+        message   = f"Cobro sistema para deudor {debtor_id}",
+        user_id   = user_id,
     )
     
     db.add(log)
