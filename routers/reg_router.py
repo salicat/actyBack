@@ -456,6 +456,7 @@ async def generate_system_payment(
     
     existing_run = db.query(RegsInDb).filter(
         RegsInDb.debtor_id == debtor_id,
+        RegsInDb.comment != "System_Initial",
         RegsInDb.comment == "System",
         RegsInDb.date.between(month_start, month_end)
     ).first()
@@ -475,6 +476,20 @@ async def generate_system_payment(
     pending_payment = last_register.paid
     print(f"[DEBUG] Último pago mínimo: {pending_payment}")
 
+    # 2.4 Validar existencia de tasa de mora PARA EL MES ACTUAL (OBLIGATORIO)
+    penalty_rate = db.query(PenaltyInDB).filter(
+        PenaltyInDB.start_date <= month_start,
+        PenaltyInDB.end_date >= month_end
+    ).first()
+
+    if not penalty_rate:
+        raise HTTPException(
+            status_code=400,
+            detail="No existe tasa de mora configurada para el mes actual"
+        )
+
+    print(f"[DEBUG] Tasa de mora vigente ({month_start.strftime('%Y-%m')}): {penalty_rate.penalty_rate}%")
+
     # ----------------------------------
     # 3. CONFIGURACIÓN INICIAL
     # ----------------------------------
@@ -484,7 +499,7 @@ async def generate_system_payment(
     
     print(f"[DEBUG] Hipoteca actual: Balance={mortgage.current_balance} - Cuota={mortgage.monthly_payment}")
 
-    # 3.1 Obtener TODOS los pagos del mes
+    # 3.1 Obtener TODOS los pagos del mes (INCLUYENDO System_Initial)
     payments = db.query(RegsInDb).filter(
         RegsInDb.debtor_id == debtor_id,
         RegsInDb.payment_status == "approved",
@@ -492,6 +507,9 @@ async def generate_system_payment(
     ).order_by(RegsInDb.date.asc()).all()
     
     print(f"[DEBUG] Pagos encontrados en el mes: {len(payments)}")
+    for p in payments:
+        print(f"• Pago ID: {p.id} | Tipo: {p.comment} | Monto: {p.paid}")
+
 
     # ----------------------------------
     # 4. PROCESAR CADA PAGO INDIVIDUALMENTE
@@ -558,33 +576,42 @@ async def generate_system_payment(
         db.commit()  # Persistir abonos a capital
 
     else:
-        print("[DEBUG] No hay pagos en el mes - Aplicando mora completa")
-        penalty_rate = db.query(PenaltyInDB).filter(
-            PenaltyInDB.start_date <= month_start,
-            PenaltyInDB.end_date >= month_end).first()
+        print("[DEBUG] No hay pagos registrados - Aplicando mora máxima")
+
+        # 1. Obtener base para cálculo de mora (último pago mínimo adeudado)
+        base_calculo = last_register.min_payment  # ¡Clave usar min_payment!
         
-        if penalty_rate:
-            total_penalty = pending_payment * (penalty_rate.penalty_rate / 100)
-            total_days = 30  # Asumir mes completo sin pagos
-            penalty_description = f"Mes sin pago interes de mora: {penalty_rate.penalty_rate}%"
+        # 2. Calcular mora para 30 días fijos
+        total_days = 30
+        interes_diario = (base_calculo * penalty_rate.penalty_rate) / 100 / 30
+        total_penalty = round(interes_diario * 30, 2)
+        
+        # 3. Actualizar descripción
+        penalty_description = f"Mora 30 dias {penalty_rate.penalty_rate}% sobre {base_calculo}"
+        
+        print(f"[DEBUG] Cálculo mora:")
+        print(f"• Base: {base_calculo} | Tasa diaria: {interes_diario}")
+        print(f"• Total a cargar: {total_penalty}")
 
     # ----------------------------------
     # 5. CALCULAR NUEVOS VALORES
     # ----------------------------------
+   
     # 5.1 Nueva cuota basada en balance actual
     new_monthly_payment = mortgage.current_balance * (mortgage.interest_rate / 100)
-    mortgage.monthly_payment = new_monthly_payment
-    
-    # 5.2 Total a cobrar = Cuota + Mora - Excedentes aplicables
-    total_amount = new_monthly_payment + total_penalty
-    new_min_payment = total_amount - total_remnant
-    
+
+    # 5.2 Calcular deuda acumulada = Cuota anterior pendiente + Mora + Nueva cuota
+    deuda_acumulada = last_register.min_payment + total_penalty + new_monthly_payment
+
+    # 5.3 Ajustar con excedentes aplicables
+    new_min_payment = deuda_acumulada - total_remnant
+
     print(f"\n[DEBUG] Resumen final:")
+    print(f"• Cuota pendiente anterior: {last_register.min_payment}")
     print(f"• Nueva cuota: {new_monthly_payment}")
     print(f"• Total mora: {total_penalty}")
     print(f"• Excedentes aplicables: {total_remnant}")
     print(f"• Pago mínimo resultante: {new_min_payment}")
-
     # ----------------------------------
     # 6. GENERAR REGISTRO DE COBRO
     # ----------------------------------
@@ -596,7 +623,7 @@ async def generate_system_payment(
         debtor_id           = debtor_id,
         date                = reg_data.date,
         concept             = f"Cobro generado {penalty_description.strip()}" if total_penalty else "Cobro generado",
-        amount              = total_amount,
+        amount              = new_monthly_payment,
         penalty             = total_penalty,
         penalty_days        = total_days,
         # KEY: Usar paid para llevar excedentes al siguiente mes

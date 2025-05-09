@@ -163,18 +163,18 @@ def create_mortgage(mortgage_data   : MortgageCreate,
 
     if existing_mortgage:
         # Update existing provisional mortgage
-        existing_mortgage.lender_id = lender.id_number
-        existing_mortgage.debtor_id = debtor.id_number
-        existing_mortgage.agent_id = agent.id_number if agent else None
-        existing_mortgage.start_date = mortgage_data.start_date
-        existing_mortgage.initial_balance = mortgage_data.initial_balance 
-        existing_mortgage.interest_rate = mortgage_data.interest_rate
-        existing_mortgage.current_balance = mortgage_data.current_balance
-        existing_mortgage.monthly_payment = (mortgage_data.initial_balance * mortgage_data.interest_rate) / 100, 
-        existing_mortgage.mortgage_stage = "active"
-        existing_mortgage.mortgage_status = "active"  # Assuming the mortgage becomes active after update
-        existing_mortgage.last_update = local_timestamp_str
-        existing_mortgage.comments = 'Crédito desembolsado'
+        existing_mortgage.lender_id         = lender.id_number
+        existing_mortgage.debtor_id         = debtor.id_number
+        existing_mortgage.agent_id          = agent.id_number if agent else None
+        existing_mortgage.start_date        = mortgage_data.start_date
+        existing_mortgage.initial_balance   = mortgage_data.initial_balance 
+        existing_mortgage.interest_rate     = mortgage_data.interest_rate
+        existing_mortgage.current_balance   = mortgage_data.current_balance
+        existing_mortgage.monthly_payment   = (mortgage_data.initial_balance * mortgage_data.interest_rate) / 100, 
+        existing_mortgage.mortgage_stage    = "active"
+        existing_mortgage.mortgage_status   = "active"  # Assuming the mortgage becomes active after update
+        existing_mortgage.last_update       = local_timestamp_str
+        existing_mortgage.comments          = 'Crédito desembolsado'
         db.commit()   
         message = "Mortgage updated successfully, First reg created"
         new_reg = RegsInDb(
@@ -191,7 +191,7 @@ def create_mortgage(mortgage_data   : MortgageCreate,
             limit_date      = mortgage_data.start_date + timedelta(days=30),  # Adjusted for clarity
             to_main_balance = 0,
             payment_status  = "approved",
-            comment         = "System"
+            comment         = "System_Initial"
         )
         
         db.add(new_reg)
