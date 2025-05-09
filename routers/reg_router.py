@@ -538,7 +538,7 @@ async def generate_system_payment(
             if dias_mora > 0:
                 mora = (pago.min_payment * penalty_rate.penalty_rate / 100) / 30 * dias_mora
                 total_penalty += mora
-                penalty_description += f"+ {dias_mora} dia × {penalty_rate.penalty_rate}% "
+                penalty_description += f"+mora de {dias_mora} dias × {penalty_rate.penalty_rate}% "
                 print(f"• Mora calculada: {mora} | Total acumulado: {total_penalty}")
 
             # 4.3 Calcular excedente (lo pagado - mínimo requerido)
@@ -597,21 +597,26 @@ async def generate_system_payment(
     # 5. CALCULAR NUEVOS VALORES
     # ----------------------------------
    
-    # 5.1 Nueva cuota basada en balance actual
+    # 5.1 Calcular saldo pendiente REAL del período anterior
+    saldo_pendiente_anterior = max(last_register.min_payment - last_register.paid, 0)
+
+    # 5.2 Nueva cuota basada en balance actual
     new_monthly_payment = mortgage.current_balance * (mortgage.interest_rate / 100)
 
-    # 5.2 Calcular deuda acumulada = Cuota anterior pendiente + Mora + Nueva cuota
-    deuda_acumulada = last_register.min_payment + total_penalty + new_monthly_payment
+    # 5.3 Calcular deuda total acumulada CORRECTAMENTE
+    deuda_total = saldo_pendiente_anterior + total_penalty + new_monthly_payment
 
-    # 5.3 Ajustar con excedentes aplicables
-    new_min_payment = deuda_acumulada - total_remnant
+    # 5.4 Ajustar con excedentes aplicables
+    new_min_payment = deuda_total - total_remnant
 
-    print(f"\n[DEBUG] Resumen final:")
-    print(f"• Cuota pendiente anterior: {last_register.min_payment}")
-    print(f"• Nueva cuota: {new_monthly_payment}")
-    print(f"• Total mora: {total_penalty}")
+    print(f"\n[DEBUG] Resumen actualizado:")
+    print(f"• Saldo pendiente real: {saldo_pendiente_anterior}")
+    print(f"• Intereses moratorios: {total_penalty}")
+    print(f"• Nueva cuota corriente: {new_monthly_payment}")
     print(f"• Excedentes aplicables: {total_remnant}")
     print(f"• Pago mínimo resultante: {new_min_payment}")
+    
+    
     # ----------------------------------
     # 6. GENERAR REGISTRO DE COBRO
     # ----------------------------------
