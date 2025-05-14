@@ -524,88 +524,81 @@ async def generate_system_payment(
 
         print(f"[DEBUG] Tasa de mora: {penalty_rate.penalty_rate}%")
 
-        if payments:
-            remaining_min_payment = last_register.min_payment  # Nuevo: Rastrea saldo pendiente
-            
-            for pago in payments:
-                print(f"\n[DEBUG] Procesando pago ID: {pago.id}")
-                print(f"• Fecha pago: {pago.date} | Fecha límite: {pago.limit_date}")
-                print(f"• Pagado: {pago.paid} | Pago mínimo requerido: {pago.min_payment}")
+        # Variables clave para el cálculo acumulado
+        remaining_min_payment = last_register.min_payment
+        fecha_limite_original = last_register.limit_date
+        dias_mora_acumulados = 0
+        total_days = 0  # Reiniciamos para cálculo preciso
+        
+        for pago in payments:
+            print(f"\n[DEBUG] Procesando pago ID: {pago.id}")
+            print(f"• Fecha pago: {pago.date} | Fecha límite original: {fecha_limite_original}")
+            print(f"• Pagado: {pago.paid} | Pago mínimo requerido: {last_register.min_payment}")
 
-                # 4.1 Calcular monto aplicable al pago mínimo
-                aplicable_a_min = min(pago.paid, remaining_min_payment)
-                remaining_min_payment -= aplicable_a_min
-                
-                # 4.2 Calcular excedente REAL (lo pagado - lo aplicado al mínimo)
-                excedente = pago.paid - aplicable_a_min
-                
-                # 4.3 Calcular días de mora SOLO si hay saldo pendiente
-                if remaining_min_payment > 0 or aplicable_a_min < pago.min_payment:
-                    dias_mora = max((pago.date - pago.limit_date).days, 0)
-                    total_days += dias_mora
-                    print(f"• Días mora: {dias_mora} (aplicables)")
-                    
-                    # 4.4 Calcular mora si hay atraso
-                    if dias_mora > 0:
-                        mora = (aplicable_a_min * penalty_rate.penalty_rate / 100) / 30 * dias_mora
-                        total_penalty += mora
-                        penalty_description += f"+mora de {dias_mora} dias × {penalty_rate.penalty_rate}% "
-                        print(f"• Mora calculada: {mora} | Total acumulado: {total_penalty}")
-                else:
-                    print("• Sin días mora (pago completo en fecha)")
+            # Calcular días de mora hasta este pago si aún hay saldo pendiente
+            if remaining_min_payment > 0:
+                dias_mora_pago = max((pago.date - fecha_limite_original).days, 0)
+                dias_mora_acumulados = max(dias_mora_pago - total_days, 0)  # Evitar duplicados
+                print(f"• Días mora acumulados hasta este pago: {dias_mora_pago}")
 
-                # 4.5 Manejar excedentes (código existente modificado)
-                if excedente > 0:
-                    print(f"• Excedente detectado: {excedente}")
+            # Calcular monto aplicable al pago mínimo
+            aplicable_a_min = min(pago.paid, remaining_min_payment)
+            remaining_min_payment -= aplicable_a_min
+
+            # Calcular mora solo si hay saldo pendiente antes de este pago
+            if dias_mora_acumulados > 0:
+                total_days += dias_mora_acumulados
+                mora = (aplicable_a_min * penalty_rate.penalty_rate / 100) / 30 * dias_mora_acumulados
+                total_penalty += mora
+                penalty_description += f"+{dias_mora_acumulados}d×{penalty_rate.penalty_rate}% "
+                print(f"• Mora aplicada: {mora:.2f} | Días: {dias_mora_acumulados}")
+
+            # Manejar excedentes
+            excedente = pago.paid - aplicable_a_min
+            if excedente > 0:
+                print(f"• Excedente real detectado: {excedente}")
                 
-                # 4.6 Aplicar a capital si supera 5%
                 if excedente > (mortgage.current_balance * 0.05):
                     print(f"• Aplicando {excedente} a capital (5%={mortgage.current_balance*0.05})")
                     
-                    # Crear registro de abono
                     capital_reg = RegsInDb(
-                        mortgage_id     = mortgage.id,
-                        lender_id       = mortgage.lender_id,
-                        debtor_id       = debtor_id,
-                        date            = pago.date,
-                        paid            = excedente,
-                        concept         = "Abono a capital",
-                        amount          = 0,
-                        penalty         = 0,
-                        penalty_days    = 0,
-                        min_payment     = 0,
-                        limit_date      = pago.limit_date,
+                        mortgage_id = mortgage.id,
+                        lender_id = mortgage.lender_id,
+                        debtor_id = debtor_id,
+                        date = pago.date,
+                        paid = excedente,
+                        concept = "Abono a capital",
+                        amount = 0,
+                        penalty = 0,
+                        penalty_days = 0,
+                        min_payment = 0,
+                        limit_date = pago.limit_date,
                         to_main_balance = excedente,
-                        payment_status  = "approved",
-                        comment         = "System"
+                        payment_status = "approved",
+                        comment = "System"
                     )
                     db.add(capital_reg)
                     mortgage.current_balance -= excedente
-                    mortgage.monthly_payment = mortgage.current_balance * (mortgage.interest_rate / 100) 
+                    mortgage.monthly_payment = mortgage.current_balance * (mortgage.interest_rate / 100)
                 else:
                     total_remnant += excedente
-                    print(f"• Excedente acumulado para descuento: {total_remnant}")
 
-        db.commit()  # Persistir abonos a capital
+            # Actualizar fecha límite para próximos cálculos si se cubrió el mínimo
+            if remaining_min_payment <= 0:
+                fecha_limite_original = pago.date  # Resetear contador de mora
+
+        db.commit()
 
     else:
         print("[DEBUG] No hay pagos registrados - Aplicando mora máxima")
-
-        # 1. Obtener base para cálculo de mora (último pago mínimo adeudado)
-        base_calculo = last_register.min_payment  # ¡Clave usar min_payment!
-        
-        # 2. Calcular mora para 30 días fijos
+        base_calculo = last_register.min_payment
         total_days = 30
         interes_diario = (base_calculo * penalty_rate.penalty_rate) / 100 / 30
         total_penalty = round(interes_diario * 30, 2)
+        penalty_description = f"Mora 30d×{penalty_rate.penalty_rate}%"
+        print(f"[DEBUG] Mora total: {total_penalty}")
         
-        # 3. Actualizar descripción
-        penalty_description = f". Mora 30 dias {penalty_rate.penalty_rate}% sobre {base_calculo}"
-        
-        print(f"[DEBUG] Cálculo mora:")
-        print(f"• Base: {base_calculo} | Tasa diaria: {interes_diario}")
-        print(f"• Total a cargar: {total_penalty}")
-
+    
     # ----------------------------------
     # 5. CALCULAR NUEVOS VALORES
     # ----------------------------------
