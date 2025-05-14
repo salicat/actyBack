@@ -243,7 +243,7 @@ async def register_mortgage_payment(
             comprobante     = receipt_path,
             payment_status  = payment_status,
             payment_type    = payment_type,
-            concept         = f"Pago {'con mora' if mora_days > 0 else 'normal'} reportado",
+            concept         = f"Pago {'con extemporaneo' if mora_days > 0 else 'normal'} reportado",
             comment         = f"Registrado por usuario ID: {user_id}"
         )
         
@@ -262,7 +262,7 @@ async def register_mortgage_payment(
     try:
         log_entry = LogsInDb(
             action="REGISTRO_PAGO",
-            timestamp=datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
+            timestamp=local_timestamp_str,
             message=f"Nuevo pago ID: {new_reg.id} | Monto: {paid_amount} | Días mora: {mora_days}",
             user_id=user_id
         )
@@ -555,7 +555,7 @@ async def generate_system_payment(
                         mortgage_id     = mortgage.id,
                         lender_id       = mortgage.lender_id,
                         debtor_id       = debtor_id,
-                        date            = reg_data.date,
+                        date            = pago.date,
                         paid            = excedente,
                         concept         = "Abono a capital",
                         amount          = 0,
@@ -569,6 +569,7 @@ async def generate_system_payment(
                     )
                     db.add(capital_reg)
                     mortgage.current_balance -= excedente
+                    mortgage.monthly_payment = mortgage.current_balance * (mortgage.interest_rate / 100) 
                 else:
                     total_remnant += excedente
                     print(f"• Excedente acumulado para descuento: {total_remnant}")
@@ -587,7 +588,7 @@ async def generate_system_payment(
         total_penalty = round(interes_diario * 30, 2)
         
         # 3. Actualizar descripción
-        penalty_description = f"Mora 30 dias {penalty_rate.penalty_rate}% sobre {base_calculo}"
+        penalty_description = f". Mora 30 dias {penalty_rate.penalty_rate}% sobre {base_calculo}"
         
         print(f"[DEBUG] Cálculo mora:")
         print(f"• Base: {base_calculo} | Tasa diaria: {interes_diario}")
