@@ -188,6 +188,17 @@ async def create_property(
         )
         db.add(new_loan_progress)
         db.commit()
+        
+        # Log aceptación de políticas
+        log = LogsInDb(
+            action    = "Policy Accepted",
+            timestamp = local_timestamp_str,
+            message   = "El usuario aceptó las políticas",
+            user_id   = owner_id
+        )
+        db.add(log)
+
+        
 
         # Enviar correo de notificación
         
@@ -469,7 +480,7 @@ def get_properties_by_status(db: Session = Depends(get_db), token: str = Header(
     if role_from_token != "admin":
         log_entry = LogsInDb(
             action      = "User Alert",
-            timestamp   = local_timestamp_str,
+            timestamp   = local_timestamp_str, 
             message     = "Unauthorized attempt to access properties by status (Insufficient permissions)",
             user_id     = decoded_token.get("id")
         )
