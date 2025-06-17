@@ -33,8 +33,10 @@ httpx==0.28.1
 hyperframe==6.1.0
 idna==3.10
 msgpack==1.1.1
+passlib==1.7.4
 proto-plus==1.26.1
 protobuf==6.31.1
+psutil==7.0.0
 psycopg2-binary==2.9.10
 pyasn1==0.6.1
 pyasn1_modules==0.4.2
