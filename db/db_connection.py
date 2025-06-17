@@ -2,8 +2,8 @@ from sqlalchemy import create_engine
 from sqlalchemy.ext.declarative import declarative_base
 from sqlalchemy.orm import sessionmaker
 
-DATABASE_URL = "postgresql://krlz:1317@localhost/actyvalores_local"
-# DATABASE_URL = "postgresql://krlz:UwdRtTTEc0OI66wJ0l3vbwLYzQabpD0O@dpg-cuth68tsvqrc73e775rg-a.oregon-postgres.render.com/cloud_db_0rt1"
+# DATABASE_URL = "postgresql://krlz:1317@localhost/actyvalores_local"
+DATABASE_URL = "postgres://ufrocq8c5aqej2:p8402a101a838f6ce0a2a46daed74d2ded574a77b713571e7b1799ba272b2c249@c5cnr847jq0fj3.cluster-czrs8kj4isg7.us-east-1.rds.amazonaws.com:5432/d64qcbdst0uoq2"
 engine = create_engine(DATABASE_URL)
 
 SessionLocal = sessionmaker(autocommit=False, 
