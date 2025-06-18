@@ -24,7 +24,8 @@ origins = [
     "http://localhost:8080", 
     "http://127.0.0.1:8000", 
     "https://app.actyvalores.com",
-    "http://app.actyvalores.com"
+    "http://app.actyvalores.com",
+    "https://salicat-github-io.vercel.app"
 ]
 
 actyval.add_middleware(
