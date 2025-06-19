@@ -1072,7 +1072,7 @@ async def test_user_request(email: str, db: Session = Depends(get_db)):
                 "pero aquí tienes tus credenciales de acceso:"
             ),
             "credentials": {
-                "username": username,
+                "username": email,
                 "temp_password": temp_password
             }
         }
