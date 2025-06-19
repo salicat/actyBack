@@ -984,12 +984,12 @@ async def test_user_request(email: str, db: Session = Depends(get_db)):
     # Verificar si el correo ya ha solicitado un usuario de prueba
     existing_request = db.query(UserInDB).filter(UserInDB.email == email).first()
     if existing_request:
-        raise HTTPException(status_code=400, detail="Este correo tiene un usuario de prueba. Solo se permite una solicitud.")
+        return  {
+            "message": "Este correo ya tiene un usuario de prueba."
+        }
     
     # Generar username a partir de la inicial del email
     username = email.split("@")[0]  # Solo la primera letra antes del @
-
-    print(username)
 
     # Generar contraseña temporal
     temp_password = create_temp_password(username)
@@ -1066,7 +1066,16 @@ async def test_user_request(email: str, db: Session = Depends(get_db)):
         sg = SendGridAPIClient(sendgrid_api_key)
         sg.send(message)
     except Exception as e:
-        raise HTTPException(status_code=500, detail=f"Error enviando el correo: {e}")
+        return {
+            "message": (
+                "Nuestro envío por email está deshabilitado (prueba gratuita vence 25/mayo)"
+                "pero aquí tienes tus credenciales de acceso:"
+            ),
+            "credentials": {
+                "username": username,
+                "temp_password": temp_password
+            }
+        }
     
     return {"message": "Se han enviado las credenciales al correo proporcionado."}
      
