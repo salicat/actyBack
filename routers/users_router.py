@@ -1165,13 +1165,14 @@ async def update_user_info(
 
 @router.post("/user/switch-role/{username}")
 async def switch_role(username: str, db: Session = Depends(get_db)):
-    # Se espera que el username sea "periquito" o "salicat39"
-    print("Recibo usuario:", username)
-    if username not in ["Periquito de los palotes", "Vale Cortes"]:
+    
+    if username not in ["Periquito de los palotes", "Vale Cortes", "Amy Weston"]:
         raise HTTPException(status_code=400, detail="Usuario no válido para cambio de rol")
     
     if username == "Periquito de los palotes":
         target_email = "salicat39@gmail.com"
+    elif username == "Amy Weston":  
+        target_email = "nancy@gmail.com"
     else:
         target_email = "periquito@gmail.com"
     

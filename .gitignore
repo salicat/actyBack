@@ -2,3 +2,8 @@
 
 # conector
 db_connection.py
+
+__pycache__/
+*.pyc
+*.pyo
+*.pyd
